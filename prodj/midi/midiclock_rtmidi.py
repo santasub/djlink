@@ -39,9 +39,16 @@ class MidiClock(Thread):
     while self.keep_running:
       for n in range(self.calibration_cycles):
         self.midiout.send_message([0xF8])
-        time.sleep(self.delay-cal)
+        sleep_duration = self.delay - cal
+        if sleep_duration < 0:
+            sleep_duration = 0 # Prevent error and effectively busy-wait if already behind
+        time.sleep(sleep_duration)
       now = time.time()
-      cal = 0.3*cal+0.7*((now-last)/self.calibration_cycles-self.delay)
+      # Ensure calibration_cycles is not zero to prevent DivisionByZeroError, though it's fixed at 60
+      if self.calibration_cycles > 0:
+          cal = 0.3 * cal + 0.7 * ((now - last) / self.calibration_cycles - self.delay)
+      else: # Should not happen with current code where calibration_cycles is 60
+          cal = 0
       last = now
       logging.debug(f'calibration data {cal}')
 
