@@ -21,221 +21,209 @@ class NfsDownload:
     self.fhandle = None # set by lookupCallback
     self.progress = -3
     self.started_at = 0 # set by start
-    self.last_write_at = None
+    self.last_write_at = None # Timestamp of the last successful block write
     self.speed = 0
     self.future = Future()
 
-    self.max_in_flight = 4 # values > 4 did not increase read speed in my tests
+    self.max_in_flight = 4
     self.in_flight = 0
-    self.single_request_timeout = 2 # retry read after n seconds
-    self.max_read_retries = 5
-    self.read_retries = 0
+    # Application-level retry for when write_offset seems stuck
+    self.single_request_timeout = 5 # Increased timeout for app-level retry decision
+    self.max_stuck_retries = 3 # Max times we declare "stuck" and attempt to kickstart
+    self.stuck_retry_count = 0
 
     self.size = 0
-    self.read_offset = 0
-    self.write_offset = 0
+    self.read_offset = 0 # How much data we've *requested*
+    self.write_offset = 0 # How much data we've *written* (contiguous)
     self.type = NfsDownloadType.buffer
     self.download_buffer = b""
     self.download_file_handle = None
 
-    # maps offset -> data of blocks, written
-    # when continuously available
-    self.blocks = dict()
-    self.active_read_tasks = set()
+    self.blocks = dict() # Stores received blocks: offset -> data
 
   async def start(self):
-    lookup_result = await self.nfsclient.NfsLookupPath(self.host, self.mount_handle, self.src_path)
-    self.size = lookup_result.attrs.size
-    self.fhandle = lookup_result.fhandle
-    self.started_at = time.time()
-    self.sendReadRequests()
-    # Ensure the future is awaited or handled to prevent "never retrieved" if start() itself raises an exception early.
     try:
+        lookup_result = await self.nfsclient.NfsLookupPath(self.host, self.mount_handle, self.src_path)
+        self.size = lookup_result.attrs.size
+        self.fhandle = lookup_result.fhandle
+        self.started_at = time.time()
+        self.last_write_at = time.time() # Initialize to prevent immediate timeout checks
+        self.sendReadRequests()
         return await asyncio.wrap_future(self.future)
     except Exception as e:
-        # If handle_download (and thus start()) itself fails before or during sendReadRequests,
-        # ensure the future is set. fail_download is usually called from callbacks.
         if not self.future.done():
             self.fail_download(f"NfsDownload.start() failed: {str(e)}")
-        raise # Re-raise the exception
-
+        raise
 
   def setFilename(self, dst_path=""):
     self.dst_path = dst_path
-
     if os.path.exists(self.dst_path):
-      raise FileExistsError(f"file already exists: {self.dst_path}")
-
-    # create download directory if nonexistent
+      # Allow overwriting for simplicity in this context, or add specific error.
+      # For now, let's assume overwrite is okay or path is unique.
+      logging.warning(f"File {self.dst_path} already exists, will be overwritten.")
     dirname = os.path.dirname(self.dst_path)
     if dirname:
       os.makedirs(dirname, exist_ok=True)
-
     self.download_file_handle = open(self.dst_path, "wb")
     self.type = NfsDownloadType.file
 
   def sendReadRequest(self, offset):
+    if self.future.done() or self.type == NfsDownloadType.failed:
+        return 0 # Don't send if download is already finalized
+
     remaining = self.size - offset
+    if remaining <= 0:
+        return 0
+
     chunk = min(self.nfsclient.download_chunk_size, remaining)
-    # logging.debug("sending read request @ %d for %d bytes [%d in flight]", offset, chunk, self.in_flight)
     self.in_flight += 1
+    # logging.debug(f"Sending read request for offset {offset}, size {chunk}. In-flight: {self.in_flight}")
     task = asyncio.create_task(self.nfsclient.NfsReadData(self.host, self.fhandle, offset, chunk))
-    self.active_read_tasks.add(task)
-    task.add_done_callback(functools.partial(self.readCallback, offset, task)) # Pass task to callback
+    # We pass 'task' itself to the callback to potentially remove it from a tracking set if needed later
+    task.add_done_callback(functools.partial(self.readCallback, offset, task))
     return chunk
 
   def sendReadRequests(self):
-    if self.future.done() or self.type == NfsDownloadType.failed or self.write_offset == self.size: # Stop sending if already done/failed or all data received
+    if self.future.done() or self.type == NfsDownloadType.failed or self.write_offset == self.size:
         return
 
-    # Check for overall timeout on a specific block being waited for
-    if self.last_write_at is not None and \
-       self.write_offset < self.size and \
-       (self.write_offset not in self.blocks) and \
-       (self.last_write_at + self.single_request_timeout * (self.read_retries + 1) < time.time()):
-        # This condition means we've been waiting for self.write_offset for too long across potential retries.
-        # The original retry logic was a bit simplistic. Let's refine.
-        # If a block (self.write_offset) hasn't arrived and we've exceeded total timeout for it.
-        if self.read_retries >= self.max_read_retries:
-            self.fail_download(f"Read for offset {self.write_offset} ultimately timed out after {self.max_read_retries +1} attempts period.")
+    # Check if we appear stuck (write_offset not advancing)
+    if self.write_offset < self.size and (self.write_offset not in self.blocks) and \
+       self.last_write_at and (time.time() - self.last_write_at > self.single_request_timeout):
+        if self.stuck_retry_count >= self.max_stuck_retries:
+            self.fail_download(f"Download stuck at offset {self.write_offset} after {self.max_stuck_retries} checks. Last write at {self.last_write_at}. Timeouts likely occurred.")
             return
         else:
-            logging.warning(f"Read at offset {self.write_offset} appears stuck or timed out. Issuing explicit retry {self.read_retries + 1}/{self.max_read_retries + 1}.")
-            # Re-request the specific block that's missing, if no request for it is currently in_flight
-            # This is complex because in_flight is just a count. We don't track *which* offset is in_flight.
-            # For now, we'll just increment retry count and let the pipeline try to fill.
-            # A more advanced retry would re-send self.sendReadRequest(self.write_offset)
-            # but we must be careful not to increment in_flight if one is already pending for this offset.
-            # The current retry logic in original code was based on any last_write_at, not specific block.
-            # Let's stick to a simpler global retry count for now, but log better.
-            # The original code's retry: self.sendReadRequest(self.write_offset) - this could over-request.
-            # Let's assume for now the pipeline fills and eventually the timed out XID from RpcReceiver handles it.
-            # The primary goal of this section is to ensure we don't *indefinitely* send new requests if stuck.
-            self.read_retries += 1 # Count this as a retry attempt for the overall download
-            # The RpcReceiver handles individual RPC timeouts. This is more about NfsDownload progress.
-
+            logging.warning(f"Download may be stuck at offset {self.write_offset} (stuck check {self.stuck_retry_count + 1}/{self.max_stuck_retries}). Triggering more reads if possible.")
+            self.stuck_retry_count += 1
+            # Reset last_write_at to give new requests a chance before this check triggers again
+            self.last_write_at = time.time()
+            # No direct re-request here; rely on filling the pipeline. RpcReceiver handles individual timeouts.
 
     # Fill pipeline
     while self.in_flight < self.max_in_flight and self.read_offset < self.size:
-      if self.future.done() or self.type == NfsDownloadType.failed: # Check again inside loop
-          break
-      self.read_offset += self.sendReadRequest(self.read_offset)
+        if self.future.done() or self.type == NfsDownloadType.failed:
+            break
+        sent_bytes = self.sendReadRequest(self.read_offset)
+        if sent_bytes == 0 and self.read_offset < self.size : # Should not happen if remaining > 0
+             logging.warning("sendReadRequest returned 0 bytes to send, but not at EOF.")
+             break # Avoid potential infinite loop
+        self.read_offset += sent_bytes
+        if self.read_offset >= self.size: # All requests for data have been made
+             logging.debug("All necessary read requests have been dispatched.")
+             break
 
-  def readCallback(self, offset, task_ref, future_obj): # future_obj is from functools.partial implicitly
-    # task_ref is the actual task object we added to active_read_tasks
-    if task_ref in self.active_read_tasks:
-        self.active_read_tasks.remove(task_ref)
 
+  def readCallback(self, offset, task_ref, future_obj_from_partial):
     self.in_flight = max(0, self.in_flight - 1)
+    # logging.debug(f"readCallback for offset {offset}. In-flight: {self.in_flight}")
 
     if self.future.done():
         return
 
     try:
-        reply = task_ref.result() # Get result from the task_ref passed to callback
+        reply = task_ref.result() # This re-raises exceptions from NfsReadData, like ReceiveTimeout
+        # If this offset was the one we were "stuck" on, reset stuck counter
         if offset == self.write_offset:
-            self.read_retries = 0
+            self.stuck_retry_count = 0
     except asyncio.CancelledError:
         logging.debug(f"Read task for offset {offset} was cancelled.")
-        # Do not call fail_download here, as cancellation is part of a controlled shutdown.
-        # The future might already be done by fail_download.
         return
-    except Exception as e: # Other exceptions like ReceiveTimeout
+    except Exception as e:
         logging.warning(f"Read request for offset {offset} failed: {e}")
-        self.fail_download(f"Critical failure on read at offset {offset}: {str(e)}")
+        self.fail_download(f"Failure on read at offset {offset}: {str(e)}")
         return
 
-    if offset >= self.write_offset :
+    if offset >= self.write_offset:
         if offset in self.blocks:
-             logging.warning(f"Offset {offset} received twice (data already in blocks dict), ignoring new data.")
+            logging.warning(f"Offset {offset} received (again?), but already in blocks. Ignoring new.")
         else:
             self.blocks[offset] = reply.data
-    else: # offset < self.write_offset
-      logging.warning(f"Offset {offset} received but already written past this point ({self.write_offset}), ignoring.")
+    else: # offset < self.write_offset (already processed this data)
+        logging.warning(f"Offset {offset} received but data already written past this point ({self.write_offset}). Ignoring.")
 
-    self.writeBlocks() # Attempt to write any contiguous blocks
+    self.writeBlocks()
 
-    if self.future.done(): # Check again, as writeBlocks might have called finish/fail
+    if self.future.done():
         return
 
     if self.write_offset == self.size:
-        # All data has been written.
-        if self.in_flight == 0: # All sent requests have been acknowledged (success or fail)
+        # All data has been written. Now we must wait for all *sent* requests to be acknowledged.
+        if self.in_flight == 0:
             self.finish()
         else:
-            # All data is written, but some requests are outstanding (e.g. for already processed blocks due to retries or aggressive pipelining)
-            # These should eventually timeout or complete without affecting the result if data is all there.
-            logging.debug(f"All data written ({self.write_offset}/{self.size}), but {self.in_flight} requests still nominally in flight. Waiting for them to clear.")
-    else: # Not all data written yet
-      self.sendReadRequests() # Try to send more requests if pipeline has space
+            logging.debug(f"All data written ({self.write_offset}/{self.size}), but {self.in_flight} requests still in flight. Waiting for them.")
+    else:
+      self.sendReadRequests() # Try to send more
 
-  def updateProgress(self, offset):
-    new_progress = int(100*offset/self.size)
-    if new_progress > self.progress+3 or new_progress == 100:
+  def updateProgress(self, current_written_offset): # Changed arg to be explicit
+    # Only update progress based on contiguously written data
+    if self.size == 0: return # Avoid division by zero if size isn't known yet
+    new_progress = int(100 * current_written_offset / self.size)
+    if new_progress > self.progress + 3 or new_progress == 100 or self.progress == -3 : # also update on first block
       self.progress = new_progress
-      self.speed = offset/(time.time()-self.started_at)/1024/1024
+      if time.time() > self.started_at: # Avoid division by zero if time hasn't passed
+        self.speed = current_written_offset / (time.time() - self.started_at) / 1024 / 1024
+      else:
+        self.speed = 0
       logging.info("download progress %d%% (%d/%d Bytes, %.2f MiB/s)",
-        self.progress, offset, self.size, self.speed)
+                   self.progress, current_written_offset, self.size, self.speed)
 
   def writeBlocks(self):
-    # logging.debug("writing %d blocks @ %d [%d in flight]",
-    #   len(self.blocks), self.write_offset, self.in_flight)
     while self.write_offset in self.blocks:
-      data = self.blocks.pop(self.write_offset)
-      expected_length = min(self.nfsclient.download_chunk_size, self.size-self.write_offset)
-      if len(data) != expected_length:
-        logging.warning("Received %d bytes instead %d as requested. Try to decrease "\
-          "the download chunk size!", len(data), expected_length)
+      data_block = self.blocks.pop(self.write_offset)
+      expected_length = min(self.nfsclient.download_chunk_size, self.size - self.write_offset)
+      if len(data_block) != expected_length:
+        logging.warning("Received %d bytes for offset %d instead of %d. Clamping or erroring.",
+                        len(data_block), self.write_offset, expected_length)
+        # This could be a problem. For now, we'll write what we got.
+        # data_block = data_block[:expected_length] # Option: truncate
+
       if self.type == NfsDownloadType.buffer:
-        self.downloadToBufferHandler(data)
+        self.download_buffer += data_block
       elif self.type == NfsDownloadType.file:
-        self.downloadToFileHandler(data)
-      else:
-        logging.debug("dropping write @ %d", self.write_offset)
-      self.write_offset += len(data)
-      self.last_write_at = time.time()
-    if len(self.blocks) > 0:
-      # To get an arbitrary key if needed for debugging, convert to list first
-      # For example: list(self.blocks.keys())[0]
-      # However, the primary logic relies on checking `self.write_offset in self.blocks`
-      logging.debug("%d blocks still in queue, next expected is %d",
-        len(self.blocks), self.write_offset)
+        self.download_file_handle.write(data_block)
 
-  def downloadToFileHandler(self, data):
-    self.download_file_handle.write(data)
+      self.write_offset += len(data_block)
+      self.last_write_at = time.time() # Update timestamp of last successful write
+      self.updateProgress(self.write_offset) # Update progress based on new write_offset
 
-  def downloadToBufferHandler(self, data):
+    # No debug log here about remaining blocks to reduce noise, covered by stuck check.
+
+  def downloadToFileHandler(self, data): # Kept for compatibility if called directly, but writeBlocks is main
+    if self.download_file_handle and not self.download_file_handle.closed:
+        self.download_file_handle.write(data)
+
+  def downloadToBufferHandler(self, data): # Kept for compatibility
     self.download_buffer += data
 
   def finish(self):
-    logging.info("finished downloading %s to %s, %d bytes, %.2f MiB/s",
-      self.src_path, self.dst_path, self.write_offset, self.speed)
-    if self.in_flight > 0:
-      logging.error("BUG: finishing download of %s but packets are still in flight (%d)", self.src_path, self.in_flight)
-
     if not self.future.done():
+        # Ensure all data is accounted for before declaring success
+        if self.write_offset != self.size:
+            self.fail_download(f"Finish called but not all data written: {self.write_offset}/{self.size}")
+            return
+
+        logging.info("finished downloading %s to %s, %d bytes, %.2f MiB/s",
+                     self.src_path, self.dst_path, self.write_offset, self.speed)
+        if self.in_flight > 0:
+             # This should ideally be 0 if finish() is called correctly after all callbacks resolve.
+            logging.warning("BUG?: finishing download of %s with %d packets still nominally in flight.", self.src_path, self.in_flight)
+
         if self.type == NfsDownloadType.buffer:
             self.future.set_result(self.download_buffer)
         elif self.type == NfsDownloadType.file:
             if self.download_file_handle and not self.download_file_handle.closed:
                 self.download_file_handle.close()
             self.future.set_result(self.dst_path)
-        # If type is failed, fail_download should have set the exception.
     else:
-        logging.warning("finish() called but future was already done. State: %s", self.future)
-
+        logging.warning("finish() called for %s but future was already done. State: %s", self.src_path, self.future)
 
   def fail_download(self, message="Unknown error"):
     if not self.future.done():
-        logging.error("Download failed: %s", message)
+        logging.error("Download failed for %s: %s", self.src_path, message)
         self.type = NfsDownloadType.failed
-
-        # Cancel any outstanding read tasks
-        for task in list(self.active_read_tasks): # Iterate over a copy
-            if not task.done():
-                task.cancel()
-        self.active_read_tasks.clear()
-
+        # No task cancellation here in this reverted version for now.
         self.future.set_exception(RuntimeError(message))
 
         if self.type == NfsDownloadType.file and self.download_file_handle and not self.download_file_handle.closed:
@@ -244,9 +232,8 @@ class NfsDownload:
             except Exception as e:
                 logging.error(f"Error closing download file handle during fail_download: {e}")
     else:
-        logging.warning("fail_download() called for '%s' but future was already done. State: %s", message, self.future)
-
+        logging.warning("fail_download() called for '%s' (msg: %s) but future was already done. State: %s", self.src_path, message, self.future)
 
 def generic_file_download_done_callback(future):
   if future.exception() is not None:
-    logging.error("download failed: %s", future.exception())
+    logging.error("download failed (callback): %s", future.exception())

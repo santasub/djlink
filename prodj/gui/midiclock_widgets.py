@@ -2,7 +2,7 @@ import logging
 import sys # Moved to be among the first imports
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
-                             QGroupBox, QRadioButton, QDialogButtonBox)
+                             QGroupBox, QRadioButton, QDialogButtonBox, QSlider) # Added QSlider
 from PyQt5.QtCore import Qt, pyqtSignal
 
 # MIDI Clock imports
