@@ -94,11 +94,10 @@ class NfsDownload:
             self.fail_download(f"Download stuck at offset {self.write_offset} after {self.max_stuck_retries} checks. Last write at {self.last_write_at}. Timeouts likely occurred.")
             return
         else:
-            logging.warning(f"Download may be stuck at offset {self.write_offset} (stuck check {self.stuck_retry_count + 1}/{self.max_stuck_retries}). Triggering more reads if possible.")
+            logging.warning(f"Download may be stuck at offset {self.write_offset} (stuck check {self.stuck_retry_count + 1}/{self.max_stuck_retries}). Pausing sending new requests for this cycle.")
             self.stuck_retry_count += 1
-            # Reset last_write_at to give new requests a chance before this check triggers again
-            self.last_write_at = time.time()
-            # No direct re-request here; rely on filling the pipeline. RpcReceiver handles individual timeouts.
+            self.last_write_at = time.time() # Reset timeout for next check
+            return # Pause sending new requests, let existing ones resolve or time out
 
     # Fill pipeline
     while self.in_flight < self.max_in_flight and self.read_offset < self.size:

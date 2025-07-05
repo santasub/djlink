@@ -2,7 +2,8 @@ import logging
 import sys # Moved to be among the first imports
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
-                             QGroupBox, QRadioButton, QDialogButtonBox, QSlider) # Added QSlider
+                             QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
+                             QMessageBox) # Added QMessageBox
 from PyQt5.QtCore import Qt, pyqtSignal
 
 # MIDI Clock imports
@@ -689,22 +690,25 @@ class MidiClockMainWindow(QWidget):
 
     def open_settings_dialog(self):
         dialog = MidiClockSettingsDialog(self)
+        if not dialog.has_configurable_settings():
+            QMessageBox.information(self, "Settings", "No specific settings currently available for your platform.")
+            return
+
         if dialog.exec_(): # Modal execution
             new_preferred_backend = dialog.get_selected_backend()
             if self.preferred_midi_backend != new_preferred_backend:
                 self.preferred_midi_backend = new_preferred_backend
                 logging.info(f"Settings updated. Preferred MIDI backend: {self.preferred_midi_backend}")
 
-                # Stop clock if running, as backend change requires re-initialization
                 if self.midi_clock_instance and self.midi_clock_instance.is_alive():
                     logging.info("Stopping MIDI clock due to backend change.")
                     self.midi_clock_instance.stop()
                     self.midi_clock_instance = None
-                    self.start_stop_button.setChecked(False)
+                    self.start_stop_button.setChecked(False) # Ensure button state is reset
                     self.start_stop_button.setText("Start MIDI Clock")
-                    self.midi_port_combo.setEnabled(True)
+                    self.midi_port_combo.setEnabled(True) # Re-enable port selection
 
-                self.populate_midi_ports()
+                self.populate_midi_ports() # This will use the new preference
                 self.update_global_status_label()
 
 
@@ -714,28 +718,27 @@ class MidiClockSettingsDialog(QDialog):
         self.parent_window = parent
         self.setWindowTitle("MIDI Clock Settings")
         self.setMinimumWidth(300)
+        self.configurable_settings_present = False
 
         layout = QVBoxLayout(self)
 
         if sys.platform.startswith('linux') and AlsaMidiClock is not None:
+            self.configurable_settings_present = True
             backend_group = QGroupBox("MIDI Backend Preference (Linux)")
             backend_layout = QVBoxLayout()
 
             self.alsa_radio = QRadioButton("Prefer ALSA")
             self.rtmidi_radio = QRadioButton("Prefer rtmidi")
 
-            # Use a local variable for current_preference to avoid issues if parent_window attribute is temporarily None
-            current_preference = None
-            if self.parent_window:
-                 current_preference = getattr(self.parent_window, 'preferred_midi_backend', "ALSA") # Default to ALSA on Linux
+            current_preference = "ALSA" # Default preference on Linux if ALSA is available
+            if self.parent_window and getattr(self.parent_window, 'preferred_midi_backend', None):
+                 current_preference = self.parent_window.preferred_midi_backend
 
             if current_preference == "ALSA":
                 self.alsa_radio.setChecked(True)
-            elif current_preference == "rtmidi": # rtmidi or None (if parent_window was None initially)
+            elif current_preference == "rtmidi":
                 self.rtmidi_radio.setChecked(True)
-            else: # Default if somehow still None or unexpected value
-                 self.alsa_radio.setChecked(True)
-
+            # If no preference set, ALSA is default if available on Linux
 
             backend_layout.addWidget(self.alsa_radio)
             backend_layout.addWidget(self.rtmidi_radio)
@@ -745,11 +748,16 @@ class MidiClockSettingsDialog(QDialog):
             self.alsa_radio = None
             self.rtmidi_radio = None
 
+        # If no settings were added, we could add a label here.
+        # But open_settings_dialog now handles this.
 
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+    def has_configurable_settings(self):
+        return self.configurable_settings_present
 
     def get_selected_backend(self):
         if self.alsa_radio and self.alsa_radio.isChecked():
@@ -757,7 +765,7 @@ class MidiClockSettingsDialog(QDialog):
         if self.rtmidi_radio and self.rtmidi_radio.isChecked():
             return "rtmidi"
 
-        # Fallback default if UI elements aren't available (e.g. non-Linux)
+        # Fallback default based on platform and availability
         if AlsaMidiClock is not None and sys.platform.startswith('linux'):
             return "ALSA"
         return "rtmidi"

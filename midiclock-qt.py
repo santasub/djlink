@@ -39,6 +39,95 @@ class MidiClockApp:
         logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
 
         self.app = QApplication(sys.argv)
+        self.app.setStyleSheet("""
+            QWidget {
+                background-color: #2e2e2e;
+                color: #d0d0d0;
+                font-family: "Arial", sans-serif; /* Adjust font as needed */
+                font-size: 10pt; /* Default font size */
+            }
+            QPushButton {
+                background-color: #4a4a4a;
+                border: 1px solid #5a5a5a;
+                padding: 6px;
+                min-height: 20px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+            }
+            QPushButton:pressed, QPushButton:checked {
+                background-color: #0078d7;
+                color: white;
+                border: 1px solid #005394;
+            }
+            QPushButton:disabled {
+                background-color: #383838;
+                color: #707070;
+            }
+            QLabel {
+                background-color: transparent;
+                padding: 2px; /* Add some padding to labels */
+            }
+            QComboBox {
+                background-color: #3c3c3c;
+                border: 1px solid #5a5a5a;
+                padding: 4px;
+                min-height: 22px;
+                border-radius: 3px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #3c3c3c;
+                border: 1px solid #5a5a5a;
+                selection-background-color: #0078d7;
+                color: #d0d0d0;
+            }
+            QSlider::groove:horizontal {
+                border: 1px solid #5a5a5a;
+                height: 8px;
+                background: #3c3c3c;
+                margin: 2px 0;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #0078d7;
+                border: 1px solid #005394;
+                width: 16px;
+                margin: -4px 0;
+                border-radius: 8px;
+            }
+            QFrame#PlayerFrame { /* Example for PlayerTileWidget if it uses this ID */
+                border: 1px solid #505050;
+                border-radius: 4px;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #444444;
+                margin-top: 10px; /* Space for title */
+                padding-top: 10px; /* Space inside for content */
+                border-radius: 4px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px 0 5px;
+                left: 10px;
+                color: #b0b0b0; /* Lighter title for groupbox */
+            }
+            QRadioButton {
+                spacing: 5px;
+                padding: 2px;
+            }
+            QMenu {
+                background-color: #3c3c3c;
+                border: 1px solid #5a5a5a;
+                color: #d0d0d0;
+            }
+            QMenu::item:selected {
+                background-color: #0078d7;
+                color: white;
+            }
+        """)
         self.prodj = ProDj()
         self.signal_bridge = SignalBridge()
 
