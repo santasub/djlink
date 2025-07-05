@@ -8,9 +8,7 @@ from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import pyqtSignal, QObject
 
 from prodj.core.prodj import ProDj
-# We will create this file next:
-# from prodj.gui.midiclock_widgets import MidiClockMainWindow
-
+from prodj.gui.midiclock_widgets import MidiClockMainWindow
 # Placeholder for MidiClock class, will decide on exact import later
 # from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock
 # try:
@@ -43,8 +41,7 @@ class MidiClockApp:
         # We might need a more specific callback for master changes, or derive it in client_change.
         # For now, client_change can trigger UI updates which can check master status.
 
-from prodj.gui.midiclock_widgets import MidiClockMainWindow
-
+        # Moved import to top of file
         self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge)
         self.main_window.show()
 
