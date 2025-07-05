@@ -444,14 +444,35 @@ class Gui(QWidget):
     player.setOnAir(c.on_air)
     player.setSlotInfo(c.loaded_player_number, c.loaded_slot)
     if c.metadata is not None and "duration" in c.metadata:
-      player.setTime(c.position, c.metadata["duration"])
-      player.setTotalTime(c.metadata["duration"])
-      if c.position is not None:
-        player.preview_waveform.setPosition(c.position / c.metadata["duration"])
-        player.preview_waveform.setLoop((c.loop_start / c.metadata["duration"], c.loop_end / c.metadata["duration"]))
+      duration = c.metadata["duration"]
+      player.setTime(c.position, duration)
+      player.setTotalTime(duration)
+
+      if duration is not None and duration > 0:
+        if c.position is not None:
+          player.preview_waveform.setPosition(c.position / duration)
+        else:
+          # If position is None but duration is valid, set preview position to a default (e.g., 0)
+          player.preview_waveform.setPosition(0)
+
+        if c.loop_start is not None and c.loop_end is not None:
+          loop_start_norm = c.loop_start / duration
+          loop_end_norm = c.loop_end / duration
+          player.preview_waveform.setLoop((loop_start_norm, loop_end_norm))
+        else:
+          # If loop points are None, clear the loop on the preview waveform
+          player.preview_waveform.setLoop(None)
+      else:
+        # Duration is None or zero, cannot normalize position or loop for preview
+        player.preview_waveform.setPosition(0) # Default position
+        player.preview_waveform.setLoop(None) # Clear loop
     else:
       player.setTime(c.position, None)
       player.setTotalTime(None)
+      # If no metadata/duration, set defaults for preview waveform as well
+      player.preview_waveform.setPosition(0)
+      player.preview_waveform.setLoop(None)
+
     if len(c.fw) > 0:
       player.setPlayerInfo(c.model, c.ip_addr, c.fw)
 
