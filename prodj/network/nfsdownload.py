@@ -134,8 +134,11 @@ class NfsDownload:
       self.write_offset += len(data)
       self.last_write_at = time.time()
     if len(self.blocks) > 0:
-      logging.debug("%d blocks still in queue, first is %d",
-        len(self.blocks), self.blocks.keys()[0])
+      # To get an arbitrary key if needed for debugging, convert to list first
+      # For example: list(self.blocks.keys())[0]
+      # However, the primary logic relies on checking `self.write_offset in self.blocks`
+      logging.debug("%d blocks still in queue, next expected is %d",
+        len(self.blocks), self.write_offset)
 
   def downloadToFileHandler(self, data):
     self.download_file_handle.write(data)
