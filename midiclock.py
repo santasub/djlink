@@ -110,7 +110,7 @@ def update_master(player_number):
   client = p.cl.getClient(player_number)
   if client is None or not 'master' in client.state:
     return
-  if (args.notes or args.single_notes) and beat != client.beat:
+  if (args.notes or args.single_note) and beat != client.beat:
     note = args.base_note
     if args.notes:
       note += client.beat

@@ -9,7 +9,7 @@ class PacketsTestCase(unittest.TestCase):
                 b"\x26\x00\x00\x00\x0a\xff\xfa\x00\x48\x00\x49\x00" +
                 b"\x53\x00\x54\x00\x4f\x00\x52\x00\x59\xff\xfb\x00\x00"
             ),
-            Container(type='string')(value="\ufffaHISTORY\ufffb"),
+            Container(type='string', value="\ufffaHISTORY\ufffb"),
         )
 
         self.assertEqual(
@@ -18,7 +18,7 @@ class PacketsTestCase(unittest.TestCase):
                 b"\x41\x00\x59\x00\x4c\x00\x49\x00\x53\x00\x54\xff\xfb" +
                 b"\x00\x00"
             ),
-            Container(type='string')(value="\ufffaPLAYLIST\ufffb"),
+            Container(type='string', value="\ufffaPLAYLIST\ufffb"),
         )
 
         self.assertEqual(
@@ -27,7 +27,7 @@ class PacketsTestCase(unittest.TestCase):
                 0x00, 0x52, 0x00, 0x54, 0x00, 0x49, 0x00, 0x53,
                 0x00, 0x54, 0xff, 0xfb, 0x00, 0x00,
             ])),
-            Container(type='string')(value="\ufffaARTIST\ufffb"))
+            Container(type='string', value="\ufffaARTIST\ufffb"))
 
     def test_building_root_menu_request_menu_item_part(self):
         data = bytes([
@@ -57,28 +57,28 @@ class PacketsTestCase(unittest.TestCase):
         self.assertEqual(message.type, 'menu_item')
         self.assertEqual(
             message,
-            (Container
-                (magic=2267236782)
-                (transaction_id=92274689)
-                (type='menu_item')
-                (argument_count=12)
-                (arg_types=[
+            Container(
+                magic=2267236782,
+                transaction_id=92274689,
+                type='menu_item',
+                argument_count=12,
+                arg_types=[
                     'int32', 'int32', 'int32', 'string', 'int32', 'string',
                     'int32', 'int32', 'int32', 'int32', 'int32', 'int32',
-                ])
-                (args=[
-                    Container(type='int32')(value=0),
-                    Container(type='int32')(value=22),
-                    Container(type='int32')(value=20),
-                    Container(type='string')(value='\ufffaARTIST\ufffb'),
-                    Container(type='int32')(value=2),
-                    Container(type='string')(value=''),
-                    Container(type='int32')(value=149),
-                    Container(type='int32')(value=0),
-                    Container(type='int32')(value=0),
-                    Container(type='int32')(value=0),
-                    Container(type='int32')(value=0),
-                    Container(type='int32')(value=0),
-                ])
-             )
+                ],
+                args=[
+                    Container(type='int32', value=0),
+                    Container(type='int32', value=22),
+                    Container(type='int32', value=20),
+                    Container(type='string', value='\ufffaARTIST\ufffb'),
+                    Container(type='int32', value=2),
+                    Container(type='string', value=''),
+                    Container(type='int32', value=149),
+                    Container(type='int32', value=0),
+                    Container(type='int32', value=0),
+                    Container(type='int32', value=0),
+                    Container(type='int32', value=0),
+                    Container(type='int32', value=0),
+                ]
+            )
         )

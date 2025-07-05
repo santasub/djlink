@@ -9,14 +9,46 @@ from prodj.curses.loghandler import CursesHandler
 #default_loglevel=logging.DEBUG
 default_loglevel=logging.INFO
 
+import sys
+
 # init curses
 win = curses.initscr()
+curses.start_color() # Enable color if needed, though not explicitly used in this snippet
+curses.use_default_colors()
 win.clear()
-client_win = win.subwin(16, curses.COLS-1, 0, 0)
-log_win = win.subwin(18, 0)
-log_win.scrollok(True)
-win.hline(17,0,"-",curses.COLS)
-win.refresh()
+
+CLIENT_WIN_HEIGHT = 16
+SEPARATOR_LINE_Y = CLIENT_WIN_HEIGHT
+LOG_WIN_START_Y = SEPARATOR_LINE_Y + 1
+
+if curses.LINES < LOG_WIN_START_Y + 2: # Minimum 2 lines for log_win (e.g. 1 for content, 1 for border/scroll)
+    curses.endwin()
+    print(f"Terminal too small. Minimum {LOG_WIN_START_Y + 2} lines required for the layout.")
+    sys.exit(1)
+
+if curses.COLS < 20: # Arbitrary minimum width
+    curses.endwin()
+    print(f"Terminal too small. Minimum 20 columns required.")
+    sys.exit(1)
+
+try:
+    client_win = win.subwin(CLIENT_WIN_HEIGHT, curses.COLS, 0, 0)
+
+    win.hline(SEPARATOR_LINE_Y, 0, "-", curses.COLS)
+
+    log_win_height = curses.LINES - LOG_WIN_START_Y
+    if log_win_height < 1: # Ensure log_win_height is at least 1
+        log_win_height = 1
+    log_win = win.subwin(log_win_height, curses.COLS, LOG_WIN_START_Y, 0)
+    log_win.scrollok(True)
+
+    win.refresh() # Refresh main window once after initial setup
+except curses.error as e:
+    curses.endwin()
+    print(f"Curses error during window setup: {e}")
+    print("Is your terminal window large enough?")
+    sys.exit(1)
+
 
 # init logging
 ch = CursesHandler(log_win)

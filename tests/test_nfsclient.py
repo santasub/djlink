@@ -26,6 +26,6 @@ class DbclientTestCase(unittest.TestCase):
         # assert self.sock.binto.called
 
     @patch('socket.socket', new=MockSock)
-    @patch('prodj.network.nfsclient.select')
-    def test_buffer_download(self, select):
+    # @patch('prodj.network.nfsclient.select') # This was causing AttributeError as nfsclient module doesn't have 'select' attribute
+    def test_buffer_download(self): # Removed 'select' from arguments
         self.nc.enqueue_buffer_download("1.1.1.1", "usb", "/folder/file")
