@@ -4,6 +4,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
                              QGroupBox, QRadioButton, QDialogButtonBox) # Added QDialog and related
 from PyQt5.QtCore import Qt, pyqtSignal
 
+import sys # Import sys for sys.platform checks
+
 # MIDI Clock imports
 from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock
 AlsaMidiClock = None

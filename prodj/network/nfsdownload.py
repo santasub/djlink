@@ -83,7 +83,7 @@ class NfsDownload:
     return chunk
 
   def sendReadRequests(self):
-    if self.future.done() or self.type == NfsDownloadType.failed: # Stop sending if already done/failed
+    if self.future.done() or self.type == NfsDownloadType.failed or self.write_offset == self.size: # Stop sending if already done/failed or all data received
         return
 
     # Check for overall timeout on a specific block being waited for
