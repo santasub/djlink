@@ -28,16 +28,25 @@ provider_group.add_argument('--disable-dbc', dest='enable_dbc', action='store_fa
 parser.add_argument('--color-preview', action='store_true', help='Show NXS2 colored preview waveforms')
 parser.add_argument('--color-waveform', action='store_true', help='Show NXS2 colored big waveforms')
 parser.add_argument('-c', '--color', action='store_true', help='Shortcut for --color-preview and --color-waveform')
-parser.add_argument('-q', '--quiet', action='store_const', dest='loglevel', const=logging.WARNING, help='Only display warning messages', default=logging.INFO)
-parser.add_argument('-d', '--debug', action='store_const', dest='loglevel', const=logging.DEBUG, help='Display verbose debugging information')
-parser.add_argument('--dump-packets', action='store_const', dest='loglevel', const=0, help='Dump packet fields for debugging', default=logging.INFO)
+
+# Log level argument
+loglevels = ['debug', 'info', 'warning', 'error', 'critical', 'dump_packets']
+parser.add_argument('--loglevel', choices=loglevels, default='info',
+                    help=f"Set the logging level (default: info). 'dump_packets' enables packet content logging.")
+
 parser.add_argument('--chunk-size', dest='chunk_size', help='Chunk size of NFS downloads (high values may be faster but fail on some networks)', type=arg_size, default=None)
 parser.add_argument('-f', '--fullscreen', action='store_true', help='Start with fullscreen window')
 parser.add_argument('-l', '--layout', dest='layout', help='Display layout, values are xy (default), yx, xx, yy, row or column', type=arg_layout, default="xy")
 
 args = parser.parse_args()
 
-logging.basicConfig(level=args.loglevel, format='%(levelname)-7s %(module)s: %(message)s')
+# Convert loglevel string to logging module constant
+numeric_level = getattr(logging, args.loglevel.upper(), None)
+if args.loglevel == 'dump_packets':
+    numeric_level = 0 # Special case for packet dumping
+elif not isinstance(numeric_level, int):
+    raise ValueError(f'Invalid log level: {args.loglevel}')
+logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
 
 prodj = ProDj()
 prodj.data.pdb_enabled = args.enable_pdb

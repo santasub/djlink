@@ -30,7 +30,13 @@ class SignalBridge(QObject):
 class MidiClockApp:
     def __init__(self, args):
         self.args = args
-        logging.basicConfig(level=args.loglevel, format='%(levelname)-7s %(module)s: %(message)s')
+
+        numeric_level = getattr(logging, args.loglevel.upper(), None)
+        if not isinstance(numeric_level, int):
+            # Should not happen if choices are enforced by argparse
+            logging.error(f"Invalid log level: {args.loglevel}. Defaulting to INFO.")
+            numeric_level = logging.INFO
+        logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
 
         self.app = QApplication(sys.argv)
         self.prodj = ProDj()
@@ -77,14 +83,20 @@ class MidiClockApp:
 
 def main():
     parser = argparse.ArgumentParser(description='ProDJ Link MIDI Clock Utility with Qt UI')
-    parser.add_argument('-q', '--quiet', action='store_const', dest='loglevel',
-                        const=logging.WARNING, help='Display warning messages only',
-                        default=DEFAULT_LOG_LEVEL)
-    parser.add_argument('-d', '--debug', action='store_const', dest='loglevel',
-                        const=logging.DEBUG, help='Display verbose debugging information')
+
+    loglevels = ['debug', 'info', 'warning', 'error', 'critical']
+    parser.add_argument('--loglevel', choices=loglevels, default='info',
+                        help="Set the logging level (default: info).")
     # Add other arguments if needed, e.g., for forcing MIDI backend eventually
 
     args = parser.parse_args()
+
+    # Convert loglevel string to logging module constant
+    # Note: MidiClockApp __init__ currently takes the args.loglevel as is from old setup.
+    # We need to pass the numeric level or have MidiClockApp handle the conversion.
+    # For consistency, let's do conversion here and MidiClockApp can expect numeric_level.
+    # However, __init__ uses args.loglevel directly for basicConfig. So, let basicConfig handle it.
+    # The change will be in how basicConfig is called in __init__.
 
     app_instance = MidiClockApp(args)
     app_instance.run()
