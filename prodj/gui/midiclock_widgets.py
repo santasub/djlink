@@ -1,23 +1,21 @@
 import logging
+import sys # Moved to be among the first imports
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
-                             QGroupBox, QRadioButton, QDialogButtonBox) # Added QDialog and related
+                             QGroupBox, QRadioButton, QDialogButtonBox)
 from PyQt5.QtCore import Qt, pyqtSignal
-
-import sys # Import sys for sys.platform checks
 
 # MIDI Clock imports
 from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock
 AlsaMidiClock = None
-if sys.platform.startswith('linux'):
+if sys.platform.startswith('linux'): # Now sys is defined
     try:
         from prodj.midi.midiclock_alsaseq import MidiClock as AlsaMidiClock
     except ImportError:
         logging.warning("AlsaMidiClock not available on this Linux system (alsaseq library missing). Falling back to rtmidi.")
         AlsaMidiClock = None # Explicitly set to None if import fails
 
-import sys # For sys.platform check
-import time # For Tap Tempo
+import time # For Tap Tempo (sys import was here, now removed as it's at top)
 
 MAX_TAPS_FOR_AVG = 4
 TAP_TIMEOUT_SECONDS = 2.0
@@ -226,7 +224,7 @@ class MidiClockMainWindow(QWidget):
         # This slot is called when any client changes or master status might have changed.
         # We need to refresh all player tiles and potentially the selected source.
         self.update_player_display()
-        # self.update_midi_clock_source_logic() # To be implemented
+        self.update_midi_clock_source_logic() # Ensure clock source logic is re-evaluated on any change
 
     def update_player_display(self):
         logging.debug("Updating player display in MidiClockMainWindow")
@@ -239,8 +237,7 @@ class MidiClockMainWindow(QWidget):
                     tile.set_dropped_status(True)
                     logging.info(f"Player {player_num} marked as dropped.")
                 # Don't remove the tile immediately, keep it to show "Network Drop"
-                # It will be removed if it stays dropped for too long or re-added if it comes back
-            else:
+            else: # Player is active
                 if tile.is_dropped: # Was dropped, now it's active again
                     tile.set_dropped_status(False)
                     logging.info(f"Player {player_num} reconnected.")
@@ -248,60 +245,91 @@ class MidiClockMainWindow(QWidget):
 
         # Add new tiles for newly discovered players and update layout
         row, col = 0, 0
-        for client in sorted(self.prodj.cl.clients, key=lambda c: c.player_number):
-            if client.type != "cdj": # Only show CDJs
-                continue
+        # Sort by player number for consistent layout
+        sorted_clients = sorted([c for c in self.prodj.cl.clients if c.type == "cdj"], key=lambda c: c.player_number)
 
+        for client in sorted_clients:
             if client.player_number not in self.player_tiles:
                 tile = PlayerTileWidget(client.player_number)
                 tile.selected_signal.connect(self.handle_player_tile_selected)
                 self.player_tiles[client.player_number] = tile
-                self.player_grid_layout.addWidget(tile, row, col)
+                # Add to layout, ensuring it's not added multiple times if update_player_display is rapid
+                current_item = self.player_grid_layout.itemAtPosition(row, col)
+                if current_item is None or current_item.widget() != tile :
+                    if current_item is not None : # if something else is there, remove it
+                        old_widget = current_item.widget()
+                        self.player_grid_layout.removeWidget(old_widget)
+                        old_widget.deleteLater()
+                    self.player_grid_layout.addWidget(tile, row, col)
             else:
                 tile = self.player_tiles[client.player_number]
+                # Ensure it's in the correct grid position if layout changes or widgets are reordered
+                # This is a bit complex; simpler to rebuild if order changes drastically.
+                # For now, assume if it exists, it's in a reasonable place or will be repositioned by this loop.
+                # If tile is not parented to this grid layout, or at wrong pos, re-add
+                if tile.parentWidget() != self or self.player_grid_layout.indexOf(tile) == -1:
+                     self.player_grid_layout.addWidget(tile, row, col)
+                elif self.player_grid_layout.getItemPosition(self.player_grid_layout.indexOf(tile)) != (row,col) :
+                     # It is in the layout but wrong place, remove and re-add
+                     self.player_grid_layout.removeWidget(tile)
+                     self.player_grid_layout.addWidget(tile, row, col)
+
 
             is_master = "master" in client.state
             is_selected = (self.selected_player_source == client.player_number)
 
-            # Calculate delay (placeholder, actual calculation needed)
-            # This assumes midiclock.py's logic for setBpm and delay calculation
-            # will be available or replicated.
             delay_value = 0.0
-            if client.bpm is not None and client.actual_pitch is not None and client.bpm > 0:
+            effective_bpm_val = None
+            if client.bpm is not None and client.actual_pitch is not None:
                  try:
-                    effective_bpm = client.bpm * client.actual_pitch
-                    if effective_bpm > 0:
-                        delay_value = 60.0 / effective_bpm / 24.0
-                 except TypeError: # If bpm or pitch is not a number
-                    effective_bpm = None # Or some default
+                    # Ensure bpm is treated as float, especially if it could be string like "--.--"
+                    bpm_float = float(client.bpm)
+                    pitch_float = float(client.actual_pitch)
+                    if bpm_float > 0:
+                        effective_bpm_val = bpm_float * pitch_float
+                        if effective_bpm_val > 0:
+                            delay_value = 60.0 / effective_bpm_val / 24.0
+                 except (TypeError, ValueError):
+                    effective_bpm_val = None
                     delay_value = 0.0
 
-
             tile.update_data(
-                bpm=client.bpm * client.actual_pitch if client.bpm and client.actual_pitch else None,
-                delay=delay_value, # Placeholder
+                bpm=effective_bpm_val,
+                delay=delay_value,
                 is_master=is_master
             )
             tile.set_selected_source(is_selected)
-            tile.set_dropped(False) # Assume not dropped if we got an update for it
+            if client.player_number in active_player_numbers and tile.is_dropped: # Ensure it's marked not dropped if active
+                tile.set_dropped_status(False)
+
 
             col += 1
             if col >= 2: # Max 2 tiles per row
                 col = 0
                 row += 1
 
+        # Clean up any tiles in player_grid_layout that are no longer in self.player_tiles
+        # This can happen if a player is removed entirely.
+        # Not strictly necessary if set_dropped_status handles visual cue for long-gone players.
+        # For a cleaner grid, one might remove widgets not in self.player_tiles.keys()
+
         self.update_global_status_label()
 
     def handle_player_tile_selected(self, player_number):
         logging.info(f"Player tile {player_number} selected by user.")
+        tile = self.player_tiles.get(player_number)
+        if tile and tile.is_dropped: # If a dropped tile is clicked
+            # Treat as attempt to use this source again. If it's still not on network,
+            # update_midi_clock_source_logic will fail to get client and revert.
+            # If it is back, it will become the source.
+            logging.info(f"Attempting to re-select dropped player {player_number} as source.")
+            # tile.set_dropped_status(False) # Assume it's back if user clicks, let logic confirm
+
         if self.selected_player_source == player_number:
-            # If clicking the already selected player, deselect it.
-            # This means clock will revert to Master or stop if no master.
-            self.selected_player_source = None
+            self.selected_player_source = None # Deselect
         else:
             self.selected_player_source = player_number
 
-        # Update all tiles to reflect new selection
         for num, tile_widget in self.player_tiles.items():
             tile_widget.set_selected_source(num == self.selected_player_source)
 
@@ -309,7 +337,9 @@ class MidiClockMainWindow(QWidget):
         self.update_global_status_label()
 
     def _determine_midi_backend(self):
-        if AlsaMidiClock is not None and (self.preferred_midi_backend == "ALSA" or sys.platform.startswith('linux')):
+        # Default to rtmidi if ALSA is not explicitly preferred or not available
+        if sys.platform.startswith('linux') and AlsaMidiClock is not None and \
+           (self.preferred_midi_backend == "ALSA" or self.preferred_midi_backend is None): # Prefer ALSA on Linux by default
             self.MidiClockImpl = AlsaMidiClock
             logging.info("Selected ALSA MIDI backend.")
         elif RtMidiClock is not None:
@@ -317,11 +347,11 @@ class MidiClockMainWindow(QWidget):
             logging.info("Selected rtmidi MIDI backend.")
         else:
             logging.error("No suitable MIDI implementation found!")
-            self.MidiClockImpl = None # Should not happen if requirements are met
+            self.MidiClockImpl = None
 
     def populate_midi_ports(self):
         self.midi_port_combo.clear()
-        self._determine_midi_backend()
+        self._determine_midi_backend() # Ensure self.MidiClockImpl is set
 
         if self.MidiClockImpl is None:
             self.midi_port_combo.addItem("No MIDI Backend!")
@@ -329,32 +359,42 @@ class MidiClockMainWindow(QWidget):
             self.start_stop_button.setEnabled(False)
             return
 
-        temp_clock_instance = self.MidiClockImpl()
-        ports = []
-        if hasattr(temp_clock_instance, 'iter_alsa_seq_clients'): # ALSA
-            try:
-                for client_id, name, port_ids in temp_clock_instance.iter_alsa_seq_clients():
-                    for p_id in port_ids:
-                        ports.append(f"{name} ({client_id}:{p_id})")
-            except Exception as e:
-                logging.error(f"Error listing ALSA MIDI ports: {e}")
-        elif hasattr(temp_clock_instance, 'midiout'): # rtmidi
-            try:
-                rtmidi_ports = temp_clock_instance.midiout.get_ports()
-                if rtmidi_ports:
-                    ports.extend(rtmidi_ports)
-            except Exception as e:
-                logging.error(f"Error listing rtmidi MIDI ports: {e}")
+        # Create a temporary instance to list ports
+        # This instance should not start any threads or acquire system resources beyond port listing.
+        temp_clock_instance = None
+        try:
+            temp_clock_instance = self.MidiClockImpl()
+            ports = []
+            if self.MidiClockImpl == AlsaMidiClock:
+                if hasattr(temp_clock_instance, 'iter_alsa_seq_clients'):
+                    for client_id, name, port_ids in temp_clock_instance.iter_alsa_seq_clients():
+                        for p_id in port_ids:
+                            ports.append(f"{name} ({client_id}:{p_id})")
+            elif self.MidiClockImpl == RtMidiClock:
+                if hasattr(temp_clock_instance, 'midiout'):
+                    rtmidi_ports = temp_clock_instance.midiout.get_ports()
+                    if rtmidi_ports:
+                        ports.extend(rtmidi_ports)
 
-        if ports:
-            self.midi_port_combo.addItems(ports)
-            self.midi_port_combo.setEnabled(True)
-            self.start_stop_button.setEnabled(True)
-        else:
-            self.midi_port_combo.addItem("No MIDI Ports Found")
+            if ports:
+                self.midi_port_combo.addItems(ports)
+                self.midi_port_combo.setEnabled(True)
+                self.start_stop_button.setEnabled(True)
+            else:
+                self.midi_port_combo.addItem("No MIDI Ports Found")
+                self.midi_port_combo.setEnabled(False)
+                self.start_stop_button.setEnabled(False)
+        except Exception as e:
+            logging.error(f"Error listing MIDI ports: {e}")
+            self.midi_port_combo.addItem("Error listing ports")
             self.midi_port_combo.setEnabled(False)
             self.start_stop_button.setEnabled(False)
-        # temp_clock_instance is not started, will be garbage collected.
+        finally:
+            # Ensure any resources from temp_clock_instance are released if necessary
+            # For MidiClock, __del__ might handle it, or if it has an explicit close/del.
+            # Since it's not started, it should be minimal.
+            del temp_clock_instance
+
 
     def toggle_midi_clock_output(self):
         if self.start_stop_button.isChecked(): # User wants to start
@@ -364,57 +404,74 @@ class MidiClockMainWindow(QWidget):
                 self.midi_clock_instance = None
 
             selected_port_full_name = self.midi_port_combo.currentText()
-            if not selected_port_full_name or "No MIDI" in selected_port_full_name:
+            if not selected_port_full_name or "No MIDI" in selected_port_full_name or "Error listing" in selected_port_full_name:
                 logging.warning("No valid MIDI output port selected.")
                 self.start_stop_button.setChecked(False) # Uncheck button
                 return
 
             if self.MidiClockImpl is None:
-                logging.error("No MIDI implementation available.")
+                logging.error("No MIDI implementation available to start clock.")
                 self.start_stop_button.setChecked(False)
                 return
 
             self.midi_clock_instance = self.MidiClockImpl()
 
-            # Parsing port name for ALSA/rtmidi (simplified)
-            # ALSA might need client:port, rtmidi might need index or name part
-            # For simplicity, midiclock_alsaseq.open takes (name, port_id)
-            # midiclock_rtmidi.open takes (name, port_index)
-            # The combobox has "Name (id:port)" for ALSA or just "Name:port_num" for rtmidi
-            # This parsing needs to be robust or the open methods need to handle these strings.
-            # For now, let's assume open methods can parse or we pass parts.
-            # This is a complex part, using default port 0 for now if parsing fails.
-            device_name_to_open = selected_port_full_name
-            port_to_open = 0
-            # TODO: Refine port parsing from combobox string for open() methods
-            # Example for rtmidi, it might use index: port_to_open = self.midi_port_combo.currentIndex()
+            device_name_to_open = None
+            port_to_open = 0 # Default or index
+
+            if self.MidiClockImpl == RtMidiClock:
+                # rtmidi typically uses port index or full name.
+                # If names are unique, full name is fine. Otherwise, index.
+                # For simplicity, let's try to use the name directly if possible,
+                # or fall back to index if names are not unique or parsing is hard.
+                # The current rtmidi open() takes preferred_name and preferred_port (index).
+                # We'll pass the full name as preferred_name and let open() try to find it or use index 0.
+                # A better way would be to store (name, index) tuples in combobox user data.
+                port_index = self.midi_port_combo.currentIndex()
+                device_name_to_open = selected_port_full_name # rtmidi can often open by name
+                port_to_open = port_index # Pass index as preferred_port
+
+            elif self.MidiClockImpl == AlsaMidiClock:
+                # ALSA needs "client_name_or_id:port_id" or separate name and port_id
+                # Example: "Virtual Raw MIDI (20:0)" -> name="Virtual Raw MIDI", port_id=0, client_id=20
+                # The current midiclock_alsaseq.open() takes (preferred_name, preferred_port)
+                # Let's try to parse it.
+                import re
+                match = re.match(r"^(.*) \((\d+):(\d+)\)$", selected_port_full_name)
+                if match:
+                    device_name_to_open = match.group(1).strip()
+                    # client_id_to_open = int(match.group(2)) # Not directly used by open()
+                    port_to_open = int(match.group(3))
+                else: # Fallback if parsing fails, pass full name
+                    device_name_to_open = selected_port_full_name
+                    port_to_open = 0
+                    logging.warning(f"Could not parse ALSA port string '{selected_port_full_name}', using raw name and port 0.")
 
             try:
-                self.midi_clock_instance.open(preferred_name=device_name_to_open, preferred_port=port_to_open) # Adjust params as needed
+                logging.debug(f"Attempting to open MIDI port: Name='{device_name_to_open}', PortNum/ID='{port_to_open}' using {self.MidiClockImpl.__name__}")
+                self.midi_clock_instance.open(preferred_name=device_name_to_open, preferred_port=port_to_open)
                 self.update_midi_clock_source_logic() # Set initial BPM
-                self.midi_clock_instance.start()
+                if not self.midi_clock_instance.is_alive(): # Check if thread started (it should by .start())
+                    self.midi_clock_instance.start()
+
                 logging.info(f"Starting MIDI clock on port {selected_port_full_name}")
                 self.start_stop_button.setText("Stop MIDI Clock")
-                self.midi_port_combo.setEnabled(False) # Disable port selection while running
+                self.midi_port_combo.setEnabled(False)
             except Exception as e:
-                logging.error(f"Failed to start MIDI clock on {selected_port_full_name}: {e}")
+                logging.error(f"Failed to start MIDI clock on {selected_port_full_name}: {e}", exc_info=True)
                 self.midi_clock_instance = None
-                self.start_stop_button.setChecked(False) # Uncheck button
+                self.start_stop_button.setChecked(False)
         else: # User wants to stop
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
                 self.midi_clock_instance.stop()
                 logging.info("Stopping MIDI clock")
             self.midi_clock_instance = None
             self.start_stop_button.setText("Start MIDI Clock")
-            self.midi_port_combo.setEnabled(True) # Re-enable port selection
+            self.midi_port_combo.setEnabled(True)
         self.update_global_status_label()
 
     def update_midi_clock_source_logic(self):
         if self.manual_bpm_mode_active:
-            # In manual mode, BPM is controlled by the slider/tap tempo.
-            # We just need to update the global status label.
-            # The actual setBpm for manual mode is handled by slider change or tap tempo action.
-            # Or, if clock is running, ensure it's using the manual_bpm_value.
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
                 self.midi_clock_instance.setBpm(self.manual_bpm_value)
             self.update_global_status_label()
@@ -427,33 +484,33 @@ class MidiClockMainWindow(QWidget):
 
         if self.selected_player_source is not None:
             source_player = self.prodj.cl.getClient(self.selected_player_source)
-            if source_player is not None:
-                # Selected player is active
+            if source_player is not None and not self.player_tiles[source_player.player_number].is_dropped: # Check if not dropped
                 if source_player.bpm is not None and source_player.actual_pitch is not None:
                     try:
                         current_bpm = float(source_player.bpm)
                         current_pitch = float(source_player.actual_pitch)
                         if current_bpm > 0:
                             final_bpm_to_set = current_bpm * current_pitch
-                            self.last_known_good_bpm = final_bpm_to_set # Update last good BPM
-                            self.coasting_bpm = None # Not coasting
+                            self.last_known_good_bpm = final_bpm_to_set
+                            self.coasting_bpm = None
                             source_player_description = f"Player {source_player.player_number} (Selected)"
                     except (TypeError, ValueError):
                         logging.warning(f"Invalid BPM/pitch for selected player {source_player.player_number}")
-                if final_bpm_to_set is None: # Selected player has invalid BPM data right now
+                if final_bpm_to_set is None:
                     logging.warning(f"Selected Player {source_player.player_number} has no valid BPM currently.")
-            else:
-                # Selected player has disappeared from the network
-                logging.warning(f"Selected player {self.selected_player_source} disappeared. Will check for Master or coast.")
-                # Visual update for the tile is handled in update_player_display
-                # self.selected_player_source remains until user explicitly changes it or it's force-cleared.
-                # This allows for "reconnect" possibility.
-                pass # Fall through to check Master or coast
+            else: # Selected player has disappeared or is marked dropped
+                if source_player is None: # Truly gone from client list
+                    logging.warning(f"Previously selected player {self.selected_player_source} no longer exists.")
+                # If tile is marked dropped, source_player might still be the client object but tile.is_dropped is true
+                # We fall through to master/coasting.
+                # The selected_player_source attribute remains, allowing "reconnect" by user re-selecting tile.
+                pass
 
-        if final_bpm_to_set is None: # No valid BPM from selected player (or no selection)
+        if final_bpm_to_set is None:
             network_master_player = None
             for client in self.prodj.cl.clients:
-                if client.type == "cdj" and "master" in client.state:
+                if client.type == "cdj" and "master" in client.state and \
+                   (client.player_number not in self.player_tiles or not self.player_tiles[client.player_number].is_dropped) : # Ensure master is not dropped
                     network_master_player = client
                     break
 
@@ -464,74 +521,70 @@ class MidiClockMainWindow(QWidget):
                         current_pitch = float(network_master_player.actual_pitch)
                         if current_bpm > 0:
                             final_bpm_to_set = current_bpm * current_pitch
-                            self.last_known_good_bpm = final_bpm_to_set # Update last good BPM
-                            self.coasting_bpm = None # Not coasting
+                            self.last_known_good_bpm = final_bpm_to_set
+                            self.coasting_bpm = None
                             source_player_description = f"Player {network_master_player.player_number} (Network Master)"
                     except (TypeError, ValueError):
                         logging.warning(f"Invalid BPM/pitch for network master {network_master_player.player_number}")
                 if final_bpm_to_set is None:
                      logging.warning(f"Network Master Player {network_master_player.player_number} has no valid BPM currently.")
             else:
-                logging.info("No specific source and no network master found.")
+                logging.info("No specific source and no (active) network master found.")
 
-        if final_bpm_to_set is None: # Still no valid BPM, so coast
+        if final_bpm_to_set is None:
             if self.last_known_good_bpm is not None:
                 final_bpm_to_set = self.last_known_good_bpm
-                self.coasting_bpm = final_bpm_to_set # Store the coasting BPM
+                self.coasting_bpm = final_bpm_to_set
                 source_player_description = f"Coasting @ {final_bpm_to_set:.2f} BPM (Last Known)"
                 is_coasting = True
                 logging.info(f"No active BPM source. Coasting at {final_bpm_to_set:.2f} BPM.")
-            else: # Should not happen if last_known_good_bpm has a default
-                final_bpm_to_set = 120.0 # Absolute fallback
+            else:
+                final_bpm_to_set = 120.0
                 self.coasting_bpm = final_bpm_to_set
                 source_player_description = f"Coasting @ {final_bpm_to_set:.2f} BPM (Default)"
                 is_coasting = True
                 logging.warning("No BPM source and no last known good BPM. Defaulting to 120 BPM for coasting.")
 
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-            if final_bpm_to_set > 0:
+            if final_bpm_to_set is not None and final_bpm_to_set > 0:
                 self.midi_clock_instance.setBpm(final_bpm_to_set)
             else:
-                # This case should ideally be handled by final_bpm_to_set defaulting to 120
-                logging.error("Attempting to set invalid BPM (<=0). This should not happen.")
-                self.midi_clock_instance.setBpm(120) # Defensive
+                logging.error("Attempting to set invalid BPM (None or <=0). Defaulting to 120.")
+                self.midi_clock_instance.setBpm(120)
 
-        self.update_global_status_label() # Update label with current source and BPM
+        self.update_global_status_label()
 
 
     def toggle_manual_bpm_mode(self):
         self.manual_bpm_mode_active = self.manual_mode_button.isChecked()
         self.manual_bpm_slider.setEnabled(self.manual_bpm_mode_active)
         self.manual_bpm_label.setEnabled(self.manual_bpm_mode_active)
-        self.tap_tempo_button.setEnabled(self.manual_bpm_mode_active) # Enable/disable tap with manual mode
+        self.tap_tempo_button.setEnabled(self.manual_bpm_mode_active)
 
         if self.manual_bpm_mode_active:
             self.manual_mode_button.setText("Switch to Auto BPM")
-            # Set slider to current clock BPM or last known good BPM
             current_effective_bpm = self.coasting_bpm if self.coasting_bpm is not None else self.last_known_good_bpm
-            if current_effective_bpm is None: current_effective_bpm = 120.0 # Fallback
+            if current_effective_bpm is None: current_effective_bpm = 120.0
 
             self.manual_bpm_value = current_effective_bpm
             self.manual_bpm_slider.setValue(int(self.manual_bpm_value * 10))
             self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
-            self.tap_timestamps = [] # Clear tap history when mode changes
+            self.tap_timestamps = []
 
-            # If clock is running, immediately apply this manual BPM
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
                 self.midi_clock_instance.setBpm(self.manual_bpm_value)
             logging.info(f"Manual BPM mode enabled. Set to {self.manual_bpm_value:.1f} BPM.")
         else:
             self.manual_mode_button.setText("Enable Manual BPM")
-            self.tap_timestamps = [] # Clear tap history
+            self.tap_timestamps = []
             logging.info("Manual BPM mode disabled. Reverting to automatic source.")
-            # Revert to automatic source detection
             self.update_midi_clock_source_logic()
         self.update_global_status_label()
 
     def manual_bpm_slider_changed(self, value):
         self.manual_bpm_value = value / 10.0
         self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
-        self.tap_timestamps = [] # Slider interaction resets tap history
+        self.tap_timestamps = []
         if self.manual_bpm_mode_active and self.midi_clock_instance and self.midi_clock_instance.is_alive():
             self.midi_clock_instance.setBpm(self.manual_bpm_value)
         if self.manual_bpm_mode_active:
@@ -539,21 +592,16 @@ class MidiClockMainWindow(QWidget):
 
     def handle_tap_tempo_clicked(self):
         if not self.manual_bpm_mode_active:
-            # Activate manual mode if tap tempo is used while in auto mode
-            self.manual_mode_button.setChecked(True) # This will trigger toggle_manual_bpm_mode
-            # toggle_manual_bpm_mode will clear tap_timestamps, so the first tap is clean.
-            # We then immediately process this first tap.
+            self.manual_mode_button.setChecked(True)
 
         current_time = time.time()
 
-        # If last tap was too long ago, reset
         if self.tap_timestamps and (current_time - self.tap_timestamps[-1] > TAP_TIMEOUT_SECONDS):
             self.tap_timestamps = []
             logging.debug("Tap timeout, resetting tap history.")
 
         self.tap_timestamps.append(current_time)
 
-        # Keep only the last MAX_TAPS_FOR_AVG timestamps
         if len(self.tap_timestamps) > MAX_TAPS_FOR_AVG:
             self.tap_timestamps = self.tap_timestamps[-MAX_TAPS_FOR_AVG:]
 
@@ -561,21 +609,18 @@ class MidiClockMainWindow(QWidget):
             logging.debug("Not enough taps yet to calculate BPM.")
             return
 
-        # Calculate average interval
         intervals = [self.tap_timestamps[i] - self.tap_timestamps[i-1] for i in range(1, len(self.tap_timestamps))]
-        if not intervals: return # Should not happen if len >= 2
+        if not intervals: return
 
         avg_interval = sum(intervals) / len(intervals)
 
         if avg_interval > 0:
             tapped_bpm = 60.0 / avg_interval
-            # Clamp BPM to slider range (30-300)
             tapped_bpm = max(30.0, min(300.0, tapped_bpm))
 
             self.manual_bpm_value = tapped_bpm
-            self.manual_bpm_slider.setValue(int(self.manual_bpm_value * 10)) # Updates label via its connected slot
+            self.manual_bpm_slider.setValue(int(self.manual_bpm_value * 10))
             self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
-
 
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
                 self.midi_clock_instance.setBpm(self.manual_bpm_value)
@@ -584,8 +629,7 @@ class MidiClockMainWindow(QWidget):
         else:
             logging.debug("Average interval is zero, cannot calculate BPM.")
 
-
-    def update_global_status_label(self): # Removed arguments, gets state internally
+    def update_global_status_label(self):
         source_desc = "None"
         current_bpm_val = None
         is_coasting_val = self.coasting_bpm is not None and not self.manual_bpm_mode_active
@@ -595,16 +639,17 @@ class MidiClockMainWindow(QWidget):
             current_bpm_val = self.manual_bpm_value
         elif self.selected_player_source is not None:
             client = self.prodj.cl.getClient(self.selected_player_source)
-            if client:
+            if client and (client.player_number not in self.player_tiles or not self.player_tiles[client.player_number].is_dropped) : # Check if not dropped
                 source_desc = f"Player {client.player_number} (Selected)"
                 if client.bpm and client.actual_pitch:
-                    try: # Ensure BPM and pitch are numbers
+                    try:
                         current_bpm_val = float(client.bpm) * float(client.actual_pitch)
                     except (TypeError, ValueError):
-                        current_bpm_val = None # Or some default indication of bad data
-        elif not is_coasting_val: # Try network master if not manual and not selected
+                        current_bpm_val = None
+        elif not is_coasting_val:
             for client in self.prodj.cl.clients:
-                if client.type == "cdj" and "master" in client.state:
+                if client.type == "cdj" and "master" in client.state and \
+                   (client.player_number not in self.player_tiles or not self.player_tiles[client.player_number].is_dropped):
                     source_desc = f"Player {client.player_number} (Network Master)"
                     if client.bpm and client.actual_pitch:
                         try:
@@ -613,21 +658,22 @@ class MidiClockMainWindow(QWidget):
                             current_bpm_val = None
                     break
 
-        if is_coasting_val: # Overrides other descriptions if coasting
+        if is_coasting_val:
             source_desc = f"Coasting @ {self.coasting_bpm:.1f} BPM (Last Known)"
             current_bpm_val = self.coasting_bpm
 
-        if current_bpm_val is None and not self.manual_bpm_mode_active: # If still no BPM, use last known if not coasting
+        if current_bpm_val is None and not self.manual_bpm_mode_active:
              current_bpm_val = self.last_known_good_bpm if self.last_known_good_bpm else 120.0
-             if not is_coasting_val and source_desc == "None": # If truly no source
+             if not is_coasting_val and source_desc == "None":
                  source_desc = f"Default @ {current_bpm_val:.1f} BPM"
 
         status_text = "MIDI Clock: "
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             status_text += f"Running on {self.midi_port_combo.currentText()}"
             status_text += f" | Source: {source_desc}"
-            # BPM already included in source_desc for manual/coasting/default
-            if not self.manual_bpm_mode_active and not is_coasting_val and current_bpm_val and isinstance(current_bpm_val, (int,float)) and source_desc.startswith("Player"):
+            if not self.manual_bpm_mode_active and not is_coasting_val and \
+               current_bpm_val and isinstance(current_bpm_val, (int, float)) and \
+               source_desc.startswith("Player"):
                  status_text += f" @ {current_bpm_val:.2f} BPM"
         else:
             status_text += "Stopped"
@@ -644,24 +690,33 @@ class MidiClockMainWindow(QWidget):
     def open_settings_dialog(self):
         dialog = MidiClockSettingsDialog(self)
         if dialog.exec_(): # Modal execution
-            self.preferred_midi_backend = dialog.get_selected_backend()
-            logging.info(f"Settings updated. Preferred MIDI backend: {self.preferred_midi_backend}")
-            # Re-populate ports as backend preference might have changed
-            self.populate_midi_ports()
-            # If clock was running, it might need to be restarted with new backend/ports.
-            # For simplicity, changing backend preference currently requires manual clock restart.
+            new_preferred_backend = dialog.get_selected_backend()
+            if self.preferred_midi_backend != new_preferred_backend:
+                self.preferred_midi_backend = new_preferred_backend
+                logging.info(f"Settings updated. Preferred MIDI backend: {self.preferred_midi_backend}")
+
+                # Stop clock if running, as backend change requires re-initialization
+                if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+                    logging.info("Stopping MIDI clock due to backend change.")
+                    self.midi_clock_instance.stop()
+                    self.midi_clock_instance = None
+                    self.start_stop_button.setChecked(False)
+                    self.start_stop_button.setText("Start MIDI Clock")
+                    self.midi_port_combo.setEnabled(True)
+
+                self.populate_midi_ports()
+                self.update_global_status_label()
 
 
 class MidiClockSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.parent_window = parent # To access current settings if needed
+        self.parent_window = parent
         self.setWindowTitle("MIDI Clock Settings")
         self.setMinimumWidth(300)
 
         layout = QVBoxLayout(self)
 
-        # MIDI Backend Preference (Linux Only)
         if sys.platform.startswith('linux') and AlsaMidiClock is not None:
             backend_group = QGroupBox("MIDI Backend Preference (Linux)")
             backend_layout = QVBoxLayout()
@@ -669,16 +724,17 @@ class MidiClockSettingsDialog(QDialog):
             self.alsa_radio = QRadioButton("Prefer ALSA")
             self.rtmidi_radio = QRadioButton("Prefer rtmidi")
 
-            current_preference = getattr(self.parent_window, 'preferred_midi_backend', None)
+            # Use a local variable for current_preference to avoid issues if parent_window attribute is temporarily None
+            current_preference = None
+            if self.parent_window:
+                 current_preference = getattr(self.parent_window, 'preferred_midi_backend', "ALSA") # Default to ALSA on Linux
+
             if current_preference == "ALSA":
                 self.alsa_radio.setChecked(True)
-            elif current_preference == "rtmidi":
+            elif current_preference == "rtmidi": # rtmidi or None (if parent_window was None initially)
                 self.rtmidi_radio.setChecked(True)
-            else: # Default based on availability or a hardcoded default
-                if AlsaMidiClock is not None: # If ALSA is an option, make it default on Linux
-                    self.alsa_radio.setChecked(True)
-                else:
-                    self.rtmidi_radio.setChecked(True)
+            else: # Default if somehow still None or unexpected value
+                 self.alsa_radio.setChecked(True)
 
 
             backend_layout.addWidget(self.alsa_radio)
@@ -686,11 +742,10 @@ class MidiClockSettingsDialog(QDialog):
             backend_group.setLayout(backend_layout)
             layout.addWidget(backend_group)
         else:
-            self.alsa_radio = None # Ensure attribute exists even if not on Linux
+            self.alsa_radio = None
             self.rtmidi_radio = None
 
 
-        # Dialog Buttons (OK, Cancel)
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
@@ -701,43 +756,56 @@ class MidiClockSettingsDialog(QDialog):
             return "ALSA"
         if self.rtmidi_radio and self.rtmidi_radio.isChecked():
             return "rtmidi"
-        # Default if no radio buttons (e.g. non-Linux) or none selected (should not happen with radio group)
+
+        # Fallback default if UI elements aren't available (e.g. non-Linux)
         if AlsaMidiClock is not None and sys.platform.startswith('linux'):
-            return "ALSA" # Default to ALSA on Linux if available
-        return "rtmidi" # Global default
+            return "ALSA"
+        return "rtmidi"
 
 
 if __name__ == '__main__':
-    # This is just for testing the widget in isolation if needed
     from PyQt5.QtWidgets import QApplication
-    import sys
+    from unittest.mock import Mock # For MockProDj
 
     logging.basicConfig(level=logging.DEBUG, format='%(levelname)-7s %(module)s: %(message)s')
 
-    # Mock ProDj and SignalBridge for standalone testing
     class MockProDj:
         class MockClient:
-            def __init__(self, num, master=False):
+            def __init__(self, num, master=False, bpm=120.0, pitch=1.0):
                 self.player_number = num
-                self.model = "CDJ-2000NXS"
+                self.model = "CDJ-MOCK"
                 self.type = "cdj"
-                self.bpm = 120.00 + num
-                self.actual_pitch = 1.0
+                self.bpm = bpm
+                self.actual_pitch = pitch
                 self.state = ["master"] if master else []
-                self.fw = "1.23"
+                self.fw = "1.00"
 
         def __init__(self):
             self.cl = Mock()
-            self.cl.clients = [self.MockClient(1, master=True), self.MockClient(2)]
+            self.cl.clients = [self.MockClient(1, master=True, bpm=125.0), self.MockClient(2, bpm=130.0)]
+            self.cl.getClient = self._get_client # Assign method directly
 
-    class MockSignalBridge:
+        def _get_client(self, player_number):
+            for client_obj in self.cl.clients:
+                if client_obj.player_number == player_number:
+                    return client_obj
+            return None
+
+        def set_client_change_callback(self, cb): pass # Mock
+        def start(self): pass # Mock
+        def vcdj_set_player_number(self, num): pass # Mock
+        def vcdj_enable(self): pass # Mock
+        def stop(self): pass # Mock
+
+
+    class MockSignalBridge(QObject):
         client_change_signal = pyqtSignal(int)
         master_change_signal = pyqtSignal(int)
 
     app = QApplication(sys.argv)
-    mock_prodj = MockProDj()
-    mock_bridge = MockSignalBridge()
+    mock_prodj_instance = MockProDj()
+    mock_bridge_instance = MockSignalBridge()
 
-    window = MidiClockMainWindow(mock_prodj, mock_bridge)
+    window = MidiClockMainWindow(mock_prodj_instance, mock_bridge_instance)
     window.show()
     sys.exit(app.exec_())

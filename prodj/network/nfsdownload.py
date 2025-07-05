@@ -41,6 +41,7 @@ class NfsDownload:
     # maps offset -> data of blocks, written
     # when continuously available
     self.blocks = dict()
+    self.active_read_tasks = set()
 
   async def start(self):
     lookup_result = await self.nfsclient.NfsLookupPath(self.host, self.mount_handle, self.src_path)
@@ -79,7 +80,8 @@ class NfsDownload:
     # logging.debug("sending read request @ %d for %d bytes [%d in flight]", offset, chunk, self.in_flight)
     self.in_flight += 1
     task = asyncio.create_task(self.nfsclient.NfsReadData(self.host, self.fhandle, offset, chunk))
-    task.add_done_callback(functools.partial(self.readCallback, offset))
+    self.active_read_tasks.add(task)
+    task.add_done_callback(functools.partial(self.readCallback, offset, task)) # Pass task to callback
     return chunk
 
   def sendReadRequests(self):
@@ -119,28 +121,31 @@ class NfsDownload:
           break
       self.read_offset += self.sendReadRequest(self.read_offset)
 
-  def readCallback(self, offset, task):
-    self.in_flight = max(0, self.in_flight - 1) # Decrement when callback is entered
+  def readCallback(self, offset, task_ref, future_obj): # future_obj is from functools.partial implicitly
+    # task_ref is the actual task object we added to active_read_tasks
+    if task_ref in self.active_read_tasks:
+        self.active_read_tasks.remove(task_ref)
 
-    if self.future.done(): # If already failed or finished by another callback, do nothing more.
-        # logging.debug(f"readCallback for offset {offset}: future already done. Current in_flight: {self.in_flight}")
+    self.in_flight = max(0, self.in_flight - 1)
+
+    if self.future.done():
         return
 
     try:
-        reply = task.result() # This is where ReceiveTimeout would be raised
-        # If successful, reset read_retries for the *overall* download progress if this was the current write_offset
+        reply = task_ref.result() # Get result from the task_ref passed to callback
         if offset == self.write_offset:
             self.read_retries = 0
-    except Exception as e:
+    except asyncio.CancelledError:
+        logging.debug(f"Read task for offset {offset} was cancelled.")
+        # Do not call fail_download here, as cancellation is part of a controlled shutdown.
+        # The future might already be done by fail_download.
+        return
+    except Exception as e: # Other exceptions like ReceiveTimeout
         logging.warning(f"Read request for offset {offset} failed: {e}")
-        # Check if this failure should terminate the download
-        # For now, we let RpcReceiver timeouts propagate and potentially fail the whole download via fail_download.
-        # If it's a critical failure (e.g. too many retries managed by RpcReceiver or a fatal NFS error):
         self.fail_download(f"Critical failure on read at offset {offset}: {str(e)}")
         return
 
-    # Only process block if it's relevant and not already processed
-    if offset >= self.write_offset : # Process if it's the current one or a future one
+    if offset >= self.write_offset :
         if offset in self.blocks:
              logging.warning(f"Offset {offset} received twice (data already in blocks dict), ignoring new data.")
         else:
@@ -222,10 +227,17 @@ class NfsDownload:
 
   def fail_download(self, message="Unknown error"):
     if not self.future.done():
-        logging.error("Download failed: %s", message) # Log the actual failure reason
+        logging.error("Download failed: %s", message)
         self.type = NfsDownloadType.failed
+
+        # Cancel any outstanding read tasks
+        for task in list(self.active_read_tasks): # Iterate over a copy
+            if not task.done():
+                task.cancel()
+        self.active_read_tasks.clear()
+
         self.future.set_exception(RuntimeError(message))
-        # Optionally, attempt to close file handle if it was open
+
         if self.type == NfsDownloadType.file and self.download_file_handle and not self.download_file_handle.closed:
             try:
                 self.download_file_handle.close()

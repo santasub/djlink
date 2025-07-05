@@ -90,11 +90,16 @@ class PlayerWidget(QFrame):
     action_browse.triggered.connect(self.openBrowseDialog)
     action_download = self.menu.addAction("Download track")
     action_download.triggered.connect(self.downloadTrack)
-    action_start = self.menu.addAction("Start playback")
-    action_start.triggered.connect(self.playbackStart)
-    action_stop = self.menu.addAction("Stop playback")
-    action_stop.triggered.connect(self.playbackStop)
+
+    self.action_start = self.menu.addAction("Start playback") # Store as attribute
+    self.action_start.triggered.connect(self.playbackStart)
+    self.action_stop = self.menu.addAction("Stop playback") # Store as attribute
+    self.action_stop.triggered.connect(self.playbackStop)
+
+    self.menu.aboutToShow.connect(self.update_playback_actions_state) # Update when menu is shown
     self.menu_button.setMenu(self.menu)
+
+    self.update_playback_actions_state() # Initial state check
 
     self.labels["play_state"] = QLabel(self)
     self.labels["play_state"].setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -301,6 +306,24 @@ class PlayerWidget(QFrame):
   def playbackStop(self):
     logging.info(f"PlayerWidget {self.player_number}: playbackStop called.")
     self.parent_gui.prodj.vcdj.command_fader_start_single(self.player_number, start=False)
+
+  def update_playback_actions_state(self):
+    mixer_present = False
+    if self.parent_gui and self.parent_gui.prodj and self.parent_gui.prodj.cl:
+        for client in self.parent_gui.prodj.cl.clients:
+            if client.type == "djm": # Assuming 'djm' is the type string for mixers
+                mixer_present = True
+                break
+
+    self.action_start.setEnabled(mixer_present)
+    self.action_stop.setEnabled(mixer_present)
+
+    if not mixer_present:
+        self.action_start.setToolTip("Requires a DJM mixer on the ProDJ Link network for Fader Start.")
+        self.action_stop.setToolTip("Requires a DJM mixer on the ProDJ Link network for Fader Start.")
+    else:
+        self.action_start.setToolTip("")
+        self.action_stop.setToolTip("")
 
   # make browser dialog close when player window disappears
   def hideEvent(self, event):
