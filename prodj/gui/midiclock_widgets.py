@@ -596,13 +596,19 @@ class MidiClockMainWindow(QWidget):
             if client:
                 source_desc = f"Player {client.player_number} (Selected)"
                 if client.bpm and client.actual_pitch:
-                    current_bpm_val = float(client.bpm) * float(client.actual_pitch)
+                    try: # Ensure BPM and pitch are numbers
+                        current_bpm_val = float(client.bpm) * float(client.actual_pitch)
+                    except (TypeError, ValueError):
+                        current_bpm_val = None # Or some default indication of bad data
         elif not is_coasting_val: # Try network master if not manual and not selected
             for client in self.prodj.cl.clients:
                 if client.type == "cdj" and "master" in client.state:
                     source_desc = f"Player {client.player_number} (Network Master)"
                     if client.bpm and client.actual_pitch:
-                        current_bpm_val = float(client.bpm) * float(client.actual_pitch)
+                        try:
+                            current_bpm_val = float(client.bpm) * float(client.actual_pitch)
+                        except (TypeError, ValueError):
+                            current_bpm_val = None
                     break
 
         if is_coasting_val: # Overrides other descriptions if coasting
@@ -614,20 +620,18 @@ class MidiClockMainWindow(QWidget):
              if not is_coasting_val and source_desc == "None": # If truly no source
                  source_desc = f"Default @ {current_bpm_val:.1f} BPM"
 
-
         status_text = "MIDI Clock: "
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             status_text += f"Running on {self.midi_port_combo.currentText()}"
             status_text += f" | Source: {source_desc}"
             # BPM already included in source_desc for manual/coasting/default
-            if not self.manual_bpm_mode_active and not is_coasting_val and current_bpm_val and source_desc.startswith("Player"):
+            if not self.manual_bpm_mode_active and not is_coasting_val and current_bpm_val and isinstance(current_bpm_val, (int,float)) and source_desc.startswith("Player"):
                  status_text += f" @ {current_bpm_val:.2f} BPM"
         else:
             status_text += "Stopped"
-             self.coasting_bpm = None # Clear coasting BPM when clock is stopped
+            self.coasting_bpm = None # Clear coasting BPM when clock is stopped
 
         self.global_status_label.setText(status_text)
-
 
     def closeEvent(self, event):
         # Ensure MIDI clock is stopped if running

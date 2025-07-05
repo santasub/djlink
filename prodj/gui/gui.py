@@ -295,9 +295,11 @@ class PlayerWidget(QFrame):
       c.track_id, self.parent().prodj.nfs.enqueue_download_from_mount_info)
 
   def playbackStart(self):
+    logging.info(f"PlayerWidget {self.player_number}: playbackStart called.")
     self.parent_gui.prodj.vcdj.command_fader_start_single(self.player_number, start=True)
 
   def playbackStop(self):
+    logging.info(f"PlayerWidget {self.player_number}: playbackStop called.")
     self.parent_gui.prodj.vcdj.command_fader_start_single(self.player_number, start=False)
 
   # make browser dialog close when player window disappears
