@@ -28,9 +28,14 @@ pacman -S python-construct python-pyqt5 python-netifaces python-opengl
 
 Alternatively, you can use pip to install the required dependencies, preferrably in a virtualenv:
 ```
-python3 -m virtualenv venv
-venv/bin/pip install -r requirements.txt
+python3 -m venv venv
+source venv/bin/activate # On Linux/macOS
+# venv\Scripts\activate # On Windows
+pip install -r requirements.txt
 ```
+The `requirements.txt` file includes `python-rtmidi` for cross-platform MIDI support. For Linux, `alsaseq` can also be used by `midiclock.py` if installed, but `python-rtmidi` is the default for `midiclock-qt.py` on non-Linux systems.
+
+**macOS Users:** This project is now compatible with macOS. Ensure you have Python 3 and pip installed (e.g., via Homebrew). The `python-rtmidi` library requires a C++ compiler to build its extension; on macOS, this usually means having Xcode Command Line Tools installed (`xcode-select --install`).
 
 **Note:** Construct v2.9 changed a lot of its internal APIs.
 If you still need to use version 2.8, you can find an unmaintained version in the branch [construct-compat](../../../tree/construct-compat).
@@ -64,26 +69,43 @@ or when using virtualenv:
 
     venv/bin/python3 monitor-qt.py
 
+The `monitor-qt.py` application supports a `--loglevel` argument (e.g., `--loglevel debug`, `--loglevel info`) to control logging verbosity.
+
+**Note on Playback Controls:** The "Start playback" and "Stop playback" menu items in `monitor-qt.py` use the ProDJ Link Fader Start mechanism. This feature typically requires a compatible Pioneer DJM mixer to be present on the network and correctly configured to relay these commands to the players. If no mixer is present, these controls will be disabled in the UI.
+
 ![two players screenshot with browser](screenshot-full.png)
 
-### Midi Clock
+### MIDI Clock Utilities
 
-The midiclock script opens a midi sound card and outputs midi clock packets matching the current master bpm.
-Additionally, for each beat a note on event (between 60 and 63) is emitted.
-This is useful to synchronize beat machines or effect units.
+Two MIDI clock utilities are provided:
 
-To create midi clocks with exact timing, this additionally requires the [alsaseq](https://pypi.python.org/pypi/alsaseq) package.
-Depending on your distribution you may need to gain privileges to access the sequencer _/dev/snd/seq_.
-On Arch Linux, membership in the _audio_ group is required.
+1.  **`midiclock.py` (Command-Line)**
+    *   This script opens a MIDI output port and sends MIDI clock packets matching the current master BPM from the ProDJ Link network.
+    *   It can also optionally send MIDI note events on beats.
+    *   On Linux, it can use either `alsaseq` (if installed, for potentially more precise timing) or `python-rtmidi`. On other platforms like macOS and Windows, it uses `python-rtmidi`.
+    *   Use `./midiclock.py --help` to see available options, including port listing and backend selection.
 
-By default, the first midi seqencer is used.
-You can list available ports with argument _-l_.
+2.  **`midiclock-qt.py` (Graphical UI)**
+    *   A new Qt-based graphical interface for MIDI clock functionality.
+    *   **Features:**
+        *   Displays active players from the ProDJ Link network with their BPM and master status.
+        *   Allows selection of a specific player to source the BPM for the MIDI clock. Defaults to the network master.
+        *   **BPM Coasting:** If the selected BPM source is lost, the clock continues at the last known valid BPM.
+        *   **Manual BPM Control:** Includes a slider and a Tap Tempo button to manually set the MIDI clock BPM.
+        *   MIDI output port selection via a dropdown.
+        *   Start/Stop button for MIDI clock output.
+        *   Settings dialog (mainly for Linux users to prefer ALSA or rtmidi backend).
+    *   Like `monitor-qt.py`, it supports a `--loglevel` argument for controlling log output.
+    *   **Usage:**
+        ```bash
+        ./midiclock-qt.py
+        # or with virtualenv
+        venv/bin/python3 midiclock-qt.py
+        ```
 
-    ./midiclock.py
-
-or when using virtualenv:
-
-    venv/bin/python3 midiclock.py
+**General MIDI Clock Notes:**
+*   For `midiclock.py` on Linux using `alsaseq`: Depending on your distribution, you may need privileges to access `/dev/snd/seq` (e.g., membership in the `audio` group on Arch Linux).
+*   Ensure `python-rtmidi` is installed (via `requirements.txt`) for `midiclock-qt.py` and as a fallback/default for `midiclock.py`.
 
 ## Bugs & Contributing
 
