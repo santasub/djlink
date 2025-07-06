@@ -274,6 +274,11 @@ class GLWaveformWidget(QOpenGLWidget):
     if not self.loop:
       return
     start, end = self.loop
+
+    # If either component of the loop is None, we can't draw it.
+    if start is None or end is None:
+        return
+
     gl.glPushAttrib(gl.GL_ALL_ATTRIB_BITS)
     gl.glEnable(gl.GL_BLEND)
     gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)

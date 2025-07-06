@@ -90,11 +90,16 @@ class PlayerWidget(QFrame):
     action_browse.triggered.connect(self.openBrowseDialog)
     action_download = self.menu.addAction("Download track")
     action_download.triggered.connect(self.downloadTrack)
-    action_start = self.menu.addAction("Start playback")
-    action_start.triggered.connect(self.playbackStart)
-    action_stop = self.menu.addAction("Stop playback")
-    action_stop.triggered.connect(self.playbackStop)
+
+    self.action_start = self.menu.addAction("Start playback") # Store as attribute
+    self.action_start.triggered.connect(self.playbackStart)
+    self.action_stop = self.menu.addAction("Stop playback") # Store as attribute
+    self.action_stop.triggered.connect(self.playbackStop)
+
+    self.menu.aboutToShow.connect(self.update_playback_actions_state) # Update when menu is shown
     self.menu_button.setMenu(self.menu)
+
+    self.update_playback_actions_state() # Initial state check
 
     self.labels["play_state"] = QLabel(self)
     self.labels["play_state"].setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -295,10 +300,30 @@ class PlayerWidget(QFrame):
       c.track_id, self.parent().prodj.nfs.enqueue_download_from_mount_info)
 
   def playbackStart(self):
+    logging.info(f"PlayerWidget {self.player_number}: playbackStart called.")
     self.parent_gui.prodj.vcdj.command_fader_start_single(self.player_number, start=True)
 
   def playbackStop(self):
+    logging.info(f"PlayerWidget {self.player_number}: playbackStop called.")
     self.parent_gui.prodj.vcdj.command_fader_start_single(self.player_number, start=False)
+
+  def update_playback_actions_state(self):
+    mixer_present = False
+    if self.parent_gui and self.parent_gui.prodj and self.parent_gui.prodj.cl:
+        for client in self.parent_gui.prodj.cl.clients:
+            if client.type == "djm": # Assuming 'djm' is the type string for mixers
+                mixer_present = True
+                break
+
+    self.action_start.setEnabled(mixer_present)
+    self.action_stop.setEnabled(mixer_present)
+
+    if not mixer_present:
+        self.action_start.setToolTip("Requires a DJM mixer on the ProDJ Link network for Fader Start.")
+        self.action_stop.setToolTip("Requires a DJM mixer on the ProDJ Link network for Fader Start.")
+    else:
+        self.action_start.setToolTip("")
+        self.action_stop.setToolTip("")
 
   # make browser dialog close when player window disappears
   def hideEvent(self, event):
@@ -444,14 +469,35 @@ class Gui(QWidget):
     player.setOnAir(c.on_air)
     player.setSlotInfo(c.loaded_player_number, c.loaded_slot)
     if c.metadata is not None and "duration" in c.metadata:
-      player.setTime(c.position, c.metadata["duration"])
-      player.setTotalTime(c.metadata["duration"])
-      if c.position is not None:
-        player.preview_waveform.setPosition(c.position / c.metadata["duration"])
-        player.preview_waveform.setLoop((c.loop_start / c.metadata["duration"], c.loop_end / c.metadata["duration"]))
+      duration = c.metadata["duration"]
+      player.setTime(c.position, duration)
+      player.setTotalTime(duration)
+
+      if duration is not None and duration > 0:
+        if c.position is not None:
+          player.preview_waveform.setPosition(c.position / duration)
+        else:
+          # If position is None but duration is valid, set preview position to a default (e.g., 0)
+          player.preview_waveform.setPosition(0)
+
+        if c.loop_start is not None and c.loop_end is not None:
+          loop_start_norm = c.loop_start / duration
+          loop_end_norm = c.loop_end / duration
+          player.preview_waveform.setLoop((loop_start_norm, loop_end_norm))
+        else:
+          # If loop points are None, clear the loop on the preview waveform
+          player.preview_waveform.setLoop(None)
+      else:
+        # Duration is None or zero, cannot normalize position or loop for preview
+        player.preview_waveform.setPosition(0) # Default position
+        player.preview_waveform.setLoop(None) # Clear loop
     else:
       player.setTime(c.position, None)
       player.setTotalTime(None)
+      # If no metadata/duration, set defaults for preview waveform as well
+      player.preview_waveform.setPosition(0)
+      player.preview_waveform.setLoop(None)
+
     if len(c.fw) > 0:
       player.setPlayerInfo(c.model, c.ip_addr, c.fw)
 
