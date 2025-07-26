@@ -377,29 +377,28 @@ StatusPacket = Struct(
       "play_state3" / Int16ub, # 0=empty, 1=paused/reverse/vinyl grab, 9=playing, 0xd=jog
       "u10" / Default(Int8ub, 1), # 1 for rekordbox analyzed tracks, 2 for unanalyzed mp3
       Default(Int8ub, 0xff), # often 0xff, sometimes player_number of another player
-      "beat_fields" / FocusedSeq("beat_count",
-        "beat_count" / Default(Int32ub, 0),
-        "cue_distance" / Default(Int16ub, 0x1ff), # 0x1ff when no next cue, 0x100 for 64 bars (=256 beats)
-        "beat" / Default(Int8ub, 1), # 1..4
-        Padding(15),
-        "u11" / Default(Int16ub, 0x1000), # 0x0100 for xdj1000, 0x1000 for cdj2000nxs
-        Padding(8),
-        "physical_pitch2" / Pitch,
-        "actual_pitch2" / Pitch,
-        "packet_count" / Default(Int32ub, 0), # permanently increasing
-        "is_nexus" / Default(Int8ub, 0x0f), # 0x0f=nexus, 0x05=non-nexus player, 0x1f for cdj-3000 and xdj-xz
-        StopIf(this._.extra.remaining_bytes != 0x438), # cdj-3000
-        Bytes(143),  # Accepts any bytes instead of padding with null bytes
-        "key" / KeyValue,  # key of the track, keyshift not applied
-        Padding(4),
-        "keyshift" / KeyShift, # keyshift of the track
-        Bytes(76),
-        "loopStart" / Int32ub, # loop start position in ms, mul by 0.65536 to get it
-        Padding(4),
-        "loopEnd" / Int32ub, # loop end position in ms, mul by 0.65536 to get it
-        Bytes(4),
-        "wholeLoopLength" / Int16ub, # number of whole beats in the loop (minimum 1)
-        ),
+      StopIf(this._.extra.remaining_bytes < 0x98),
+      "beat_count" / Default(Int32ub, 0),
+      "cue_distance" / Default(Int16ub, 0x1ff), # 0x1ff when no next cue, 0x100 for 64 bars (=256 beats)
+      "beat" / Default(Int8ub, 1), # 1..4
+      Padding(15),
+      "u11" / Default(Int16ub, 0x1000), # 0x0100 for xdj1000, 0x1000 for cdj2000nxs
+      Padding(8),
+      "physical_pitch2" / Pitch,
+      "actual_pitch2" / Pitch,
+      "packet_count" / Default(Int32ub, 0), # permanently increasing
+      "is_nexus" / Default(Int8ub, 0x0f), # 0x0f=nexus, 0x05=non-nexus player, 0x1f for cdj-3000 and xdj-xz
+      StopIf(this._.extra.remaining_bytes != 0x438), # cdj-3000
+      Bytes(143),  # Accepts any bytes instead of padding with null bytes
+      "key" / KeyValue,  # key of the track, keyshift not applied
+      Padding(4),
+      "keyshift" / KeyShift, # keyshift of the track
+      Bytes(76),
+      "loopStart" / Int32ub, # loop start position in ms, mul by 0.65536 to get it
+      Padding(4),
+      "loopEnd" / Int32ub, # loop end position in ms, mul by 0.65536 to get it
+      Bytes(4),
+      "wholeLoopLength" / Int16ub, # number of whole beats in the loop (minimum 1)
       ),
     "djm": Struct(
       "state" / StateMask,
