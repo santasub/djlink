@@ -15,6 +15,7 @@ class MidiClock(Thread):
     self.delay = 1
     self.calibration_cycles = 60
     self.midiout = rtmidi.MidiOut()
+    self.beat_callback = None
 
   def open(self, preferred_name=None, preferred_port=0):
     available_ports = self.midiout.get_ports()
@@ -33,12 +34,19 @@ class MidiClock(Thread):
     logging.info("Using port {}".format(preferred_port))
     self.midiout.open_port(port_index)
 
+  def set_beat_callback(self, callback):
+    self.beat_callback = callback
+
   def run(self):
     cal = 0
     last = time.time()
+    beat_count = 0
     while self.keep_running:
       for n in range(self.calibration_cycles):
         self.midiout.send_message([0xF8])
+        if self.beat_callback and beat_count % 24 == 0:
+            self.beat_callback()
+        beat_count += 1
         sleep_duration = self.delay - cal
         if sleep_duration < 0:
             sleep_duration = 0 # Prevent error and effectively busy-wait if already behind
@@ -56,12 +64,14 @@ class MidiClock(Thread):
     self.keep_running = False
     self.join()
 
-  def setBpm(self, bpm):
+  def setBpm(self, bpm, pitch_offset=0):
     if bpm <= 0:
       logging.warning("Ignoring zero bpm")
       return
-    self.delay = 60/bpm/24
-    logging.info("BPM {} delay {}s".format(bpm, self.delay))
+    self.delay = (60/bpm/24) - (pitch_offset / 1000.0)
+    if self.delay < 0:
+        self.delay = 0
+    logging.info("BPM {} with pitch offset {}ms, delay {}s".format(bpm, pitch_offset, self.delay))
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
