@@ -37,16 +37,22 @@ class MidiClock(Thread):
   def set_beat_callback(self, callback):
     self.beat_callback = callback
 
+  def apply_pitch_offset(self, offset_ms):
+      self.delay -= offset_ms / 1000.0
+      if self.delay < 0:
+          self.delay = 0
+
   def run(self):
     cal = 0
     last = time.time()
-    beat_count = 0
+    next_beat_time = time.time()
     while self.keep_running:
       for n in range(self.calibration_cycles):
         self.midiout.send_message([0xF8])
-        if self.beat_callback and beat_count % 24 == 0:
+        now = time.time()
+        if self.beat_callback and now >= next_beat_time:
             self.beat_callback()
-        beat_count += 1
+            next_beat_time = now + self.delay * 24
         sleep_duration = self.delay - cal
         if sleep_duration < 0:
             sleep_duration = 0 # Prevent error and effectively busy-wait if already behind
@@ -64,14 +70,12 @@ class MidiClock(Thread):
     self.keep_running = False
     self.join()
 
-  def setBpm(self, bpm, pitch_offset=0):
+  def setBpm(self, bpm):
     if bpm <= 0:
       logging.warning("Ignoring zero bpm")
       return
-    self.delay = (60/bpm/24) - (pitch_offset / 1000.0)
-    if self.delay < 0:
-        self.delay = 0
-    logging.info("BPM {} with pitch offset {}ms, delay {}s".format(bpm, pitch_offset, self.delay))
+    self.delay = 60/bpm/24
+    logging.info("BPM {} delay {}s".format(bpm, self.delay))
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
