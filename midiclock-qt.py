@@ -128,7 +128,7 @@ class MidiClockApp:
                 color: white;
             }
         """)
-        self.prodj = ProDj()
+        self.prodj = ProDj(iface=self.args.iface)
         self.signal_bridge = SignalBridge()
 
         # Connect ProDj callbacks to signal bridge slots
@@ -176,6 +176,8 @@ def main():
     loglevels = ['debug', 'info', 'warning', 'error', 'critical']
     parser.add_argument('--loglevel', choices=loglevels, default='info',
                         help="Set the logging level (default: info).")
+    parser.add_argument('--iface', type=str,
+                        help="Name of the interface to use (e.g. eth0).")
     # Add other arguments if needed, e.g., for forcing MIDI backend eventually
 
     args = parser.parse_args()

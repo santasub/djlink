@@ -18,7 +18,7 @@ class OwnIpStatus(Enum):
   acquired = 3
 
 class ProDj(Thread):
-  def __init__(self):
+  def __init__(self, iface=None):
     super().__init__()
     self.cl = ClientList(self)
     self.data = DataProvider(self)
@@ -32,6 +32,7 @@ class ProDj(Thread):
     self.status_port = 50002
     self.need_own_ip = OwnIpStatus.notNeeded
     self.own_ip = None
+    self.iface = iface
 
   def start(self):
     self.keepalive_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -105,8 +106,8 @@ class ProDj(Thread):
     # both packet types give us enough information to store the client
     if packet["type"] in ["type_ip", "type_status", "type_change"]:
       self.cl.eatKeepalive(packet)
-    if self.own_ip is None and len(self.cl.getClientIps()) > 0:
-      self.own_ip = guess_own_iface(self.cl.getClientIps())
+    if self.own_ip is None and (len(self.cl.getClientIps()) > 0 or self.iface is not None):
+      self.own_ip = guess_own_iface(self.cl.getClientIps(), self.iface)
       if self.own_ip is not None:
         logging.info("Guessed own interface {} ip {} mask {} mac {}".format(*self.own_ip))
         self.vcdj_set_iface()
