@@ -377,7 +377,6 @@ StatusPacket = Struct(
       "play_state3" / Int16ub, # 0=empty, 1=paused/reverse/vinyl grab, 9=playing, 0xd=jog
       "u10" / Default(Int8ub, 1), # 1 for rekordbox analyzed tracks, 2 for unanalyzed mp3
       Default(Int8ub, 0xff), # often 0xff, sometimes player_number of another player
-      StopIf(this._.extra.remaining_bytes < 0x98),
       "beat_count" / Default(Int32ub, 0),
       "cue_distance" / Default(Int16ub, 0x1ff), # 0x1ff when no next cue, 0x100 for 64 bars (=256 beats)
       "beat" / Default(Int8ub, 1), # 1..4
@@ -400,6 +399,7 @@ StatusPacket = Struct(
       Bytes(4),
       "wholeLoopLength" / Int16ub, # number of whole beats in the loop (minimum 1)
       ),
+      # 4 bytes padding for 2000nxs or newer, cdj2000 does not have this
     "djm": Struct(
       "state" / StateMask,
       "physical_pitch" / Pitch,
