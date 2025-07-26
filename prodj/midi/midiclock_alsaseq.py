@@ -79,20 +79,11 @@ class MidiClock(Thread):
   def set_beat_callback(self, callback):
       self.beat_callback = callback
 
-  def apply_pitch_offset(self, offset_ms):
-      offset_s = math.floor(offset_ms / 1000.0)
-      offset_ns = math.floor(1e9 * (offset_ms / 1000.0 - offset_s))
-      self.time_s -= offset_s
-      self.time_ns -= offset_ns
-      if self.time_ns < 0:
-          self.time_s -= 1
-          self.time_ns += 1000000000
-
   def enqueue_events(self):
     for i in range(self.enqueue_at_once):
       send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
       alsaseq.output(send)
-      if self.beat_callback and i == 0:
+      if self.beat_callback and i % 6 == 0: # Blink every 1/4 note
           self.beat_callback()
       self.advance_time()
 
@@ -119,14 +110,16 @@ class MidiClock(Thread):
     self.keep_running = False
     self.join()
 
-  def setBpm(self, bpm):
+  def setBpm(self, bpm, pitch_offset=0):
     if bpm <= 0:
       logging.warning("Ignoring zero bpm")
       return
-    self.delay = 60/bpm/24
+    self.delay = (60/bpm/24) - (pitch_offset / 1000.0)
+    if self.delay < 0:
+        self.delay = 0
     self.add_s = math.floor(self.delay)
     self.add_ns = math.floor(1e9*(self.delay-self.add_s))
-    logging.info("Midi BPM %d delay %.9fs", bpm, self.delay)
+    logging.info("Midi BPM %d with pitch offset %fms, delay %.9fs", bpm, pitch_offset, self.delay)
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

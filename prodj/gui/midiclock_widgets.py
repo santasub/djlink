@@ -141,6 +141,7 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_mode_active = False
         self.manual_bpm_value = 120.0
         self.tap_timestamps = []
+        self.pitch_offset = 0.0 # In milliseconds
 
         self.midi_clock_instance = None # Will hold AlsaMidiClock or RtMidiClock instance
         self.preferred_midi_backend = None # "ALSA" or "rtmidi"
@@ -159,9 +160,10 @@ class MidiClockMainWindow(QWidget):
         QTimer.singleShot(50, lambda: self.midi_led.setStyleSheet("background-color: #505050; border-radius: 10px;"))
 
     def adjust_pitch(self, direction):
-        if self.midi_clock_instance:
-            amount = self.pitch_amount_spinbox.value()
-            self.midi_clock_instance.apply_pitch_offset(amount * direction)
+        amount = self.pitch_amount_spinbox.value()
+        self.pitch_offset += amount * direction
+        self.pitch_label.setText(f"Pitch: {self.pitch_offset:.1f} ms")
+        self.update_midi_clock_source_logic()
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -175,6 +177,12 @@ class MidiClockMainWindow(QWidget):
         controls_frame = QFrame()
         controls_frame.setFrameStyle(QFrame.StyledPanel)
         controls_layout = QHBoxLayout(controls_frame)
+
+        self.midi_led = QFrame()
+        self.midi_led.setFrameStyle(QFrame.StyledPanel)
+        self.midi_led.setFixedSize(20, 20)
+        self.midi_led.setStyleSheet("background-color: #505050; border-radius: 10px;")
+        controls_layout.addWidget(self.midi_led)
 
         self.midi_port_combo = QComboBox()
         # self.populate_midi_ports() # To be implemented
@@ -239,15 +247,12 @@ class MidiClockMainWindow(QWidget):
         self.pitch_up_button.clicked.connect(lambda: self.adjust_pitch(1))
         pitch_layout.addWidget(self.pitch_up_button)
 
+        self.pitch_label = QLabel("Pitch: 0.0 ms")
+        pitch_layout.addWidget(self.pitch_label)
+
         pitch_group.setLayout(pitch_layout)
         controls_layout.addWidget(pitch_group)
         # --- End Pitch Controls ---
-
-        self.midi_led = QFrame()
-        self.midi_led.setFrameStyle(QFrame.StyledPanel)
-        self.midi_led.setFixedSize(20, 20)
-        self.midi_led.setStyleSheet("background-color: #505050; border-radius: 10px;")
-        controls_layout.addWidget(self.midi_led)
 
         self.global_status_label = QLabel("MIDI Clock: Stopped | Source: None")
         controls_layout.addWidget(self.global_status_label)
@@ -491,7 +496,6 @@ class MidiClockMainWindow(QWidget):
             try:
                 logging.debug(f"Attempting to open MIDI port: Name='{device_name_to_open}', PortNum/ID='{port_to_open}' using {self.MidiClockImpl.__name__}")
                 self.midi_clock_instance.open(preferred_name=device_name_to_open, preferred_port=port_to_open)
-                self.midi_clock_instance.set_beat_callback(self.beat_received)
                 self.update_midi_clock_source_logic() # Set initial BPM
                 if not self.midi_clock_instance.is_alive(): # Check if thread started (it should by .start())
                     self.midi_clock_instance.start()
@@ -515,7 +519,7 @@ class MidiClockMainWindow(QWidget):
     def update_midi_clock_source_logic(self):
         if self.manual_bpm_mode_active:
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value)
+                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.pitch_offset)
             self.update_global_status_label()
             return
 
@@ -589,10 +593,10 @@ class MidiClockMainWindow(QWidget):
 
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             if final_bpm_to_set is not None and final_bpm_to_set > 0:
-                self.midi_clock_instance.setBpm(final_bpm_to_set)
+                self.midi_clock_instance.setBpm(final_bpm_to_set, self.pitch_offset)
             else:
                 logging.error("Attempting to set invalid BPM (None or <=0). Defaulting to 120.")
-                self.midi_clock_instance.setBpm(120)
+                self.midi_clock_instance.setBpm(120, self.pitch_offset)
 
         self.update_global_status_label()
 

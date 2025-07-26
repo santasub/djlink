@@ -27,12 +27,14 @@ class TestMidiClockUI(unittest.TestCase):
         self.window.close()
 
     def test_pitch_adjustment(self):
-        self.window.midi_clock_instance = Mock()
-        self.window.pitch_amount_spinbox.setValue(5.0)
+        self.assertEqual(self.window.pitch_offset, 0.0)
+        self.window.pitch_amount_spinbox.setValue(2.5)
         self.window.pitch_up_button.click()
-        self.window.midi_clock_instance.apply_pitch_offset.assert_called_with(5.0)
+        self.assertEqual(self.window.pitch_offset, 2.5)
+        self.assertEqual(self.window.pitch_label.text(), "Pitch: 2.5 ms")
         self.window.pitch_down_button.click()
-        self.window.midi_clock_instance.apply_pitch_offset.assert_called_with(-5.0)
+        self.assertEqual(self.window.pitch_offset, 0.0)
+        self.assertEqual(self.window.pitch_label.text(), "Pitch: 0.0 ms")
 
     def test_led_blink(self):
         self.assertEqual(self.window.midi_led.styleSheet(), "background-color: #505050; border-radius: 10px;")
