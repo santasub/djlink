@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, AsyncMock
 import socket
 
 from prodj.network.nfsclient import NfsClient
@@ -28,8 +28,6 @@ class DbclientTestCase(unittest.TestCase):
 
     def tearDown(self):
         self.nc.stop() # Stop the NfsClient and its event loop
-
-from unittest.mock import AsyncMock # Add AsyncMock
 
     @patch('socket.socket', new_callable=Mock) # Keep socket mocked to prevent real network calls if any part of setup tries
     def test_buffer_download(self, mock_socket_fn): # mock_socket_fn is the mocked socket constructor
