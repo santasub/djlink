@@ -15,6 +15,7 @@ class NfsClient:
     self.prodj = prodj
     self.loop = asyncio.new_event_loop()
     self.receiver = RpcReceiver()
+    self.active_tasks = set()
 
     self.rpc_auth_stamp = 0xdeadbeef
     self.rpc_sock = None
@@ -148,10 +149,15 @@ class NfsClient:
   # if sync is true, wait for the result and return it directly (30 seconds timeout)
   def enqueue_download(self, ip, slot, src_path, dst_path=None, sync=False):
     logging.debug("enqueueing download of %s from %s", src_path, ip)
-    future = asyncio.run_coroutine_threadsafe(
-      self.handle_download(ip, slot, src_path, dst_path), self.loop)
+    coro = self.handle_download(ip, slot, src_path, dst_path)
+    future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+
     if sync:
-      return future.result(timeout=30)
+        return future.result(timeout=30)
+
+    task = self.loop.create_task(coro)
+    self.active_tasks.add(task)
+    task.add_done_callback(self.active_tasks.discard)
     return future
 
   # download path from player with ip after trying to mount slot
