@@ -32,22 +32,27 @@ class DjThief(QWidget):
     def client_change_slot(self, player_number):
         c = self.prodj.cl.getClient(player_number)
         if c is None:
+            logging.debug(f"Player {player_number} disconnected.")
             # Player disconnected, remove corresponding media sources
             for key, widget in list(self.media_sources.items()):
                 if widget.player_number == player_number:
+                    logging.debug(f"Removing widget for player {player_number}")
                     widget.deleteLater()
                     del self.media_sources[key]
             return
 
+        logging.debug(f"Player {player_number} changed. Loaded slot: {c.loaded_slot}")
         if c.loaded_slot in ["sd", "usb"]:
             key = f"{c.player_number}:{c.loaded_slot}"
             if key not in self.media_sources:
+                logging.debug(f"Adding widget for player {player_number} slot {c.loaded_slot}")
                 self.media_sources[key] = MediaSourceWidget(self, c.ip_addr, c.loaded_slot, c.player_number)
                 self.layout.addWidget(self.media_sources[key], (len(self.media_sources) -1) // 2, (len(self.media_sources) - 1) % 2)
         else:
             # Media removed, remove corresponding media source
             key = f"{c.player_number}:{c.previous_loaded_slot}"
             if key in self.media_sources:
+                logging.debug(f"Removing widget for player {player_number} slot {c.previous_loaded_slot}")
                 self.media_sources[key].deleteLater()
                 del self.media_sources[key]
 
@@ -152,6 +157,8 @@ if __name__ == '__main__':
 
     prodj = ProDj()
     prodj.start()
+    prodj.vcdj_set_player_number(5)
+    prodj.vcdj_enable()
 
     app = QApplication(sys.argv)
     djthief = DjThief(prodj)
