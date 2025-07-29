@@ -27,7 +27,7 @@ class NfsDownload:
 
     self.max_in_flight = 4
     self.in_flight = 0
-    self.single_request_timeout = 10
+    self.single_request_timeout = 20
     self.max_stuck_retries = 3
     self.stuck_retry_count = 0
 

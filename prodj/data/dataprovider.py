@@ -123,7 +123,7 @@ class DataProvider(Thread):
     self._enqueue_request("beatgrid", self.beatgrid_store, (player_number, slot, track_id), callback)
 
   def get_mount_info(self, player_number, slot, track_id, callback=None):
-    self._enqueue_request("mount_info", None, (player_number, slot, track_id), callback)
+    return self._enqueue_request("mount_info", None, (player_number, slot, track_id), callback)
 
   def get_track_info(self, player_number, slot, track_id, callback=None):
     self._enqueue_request("track_info", None, (player_number, slot, track_id), callback)
@@ -131,10 +131,23 @@ class DataProvider(Thread):
   def _enqueue_request(self, request, store, params, callback):
     player_number = params[0]
     if player_number == 0 or player_number > 4:
-      logging.warning("invalid %s request parameters", request)
-      return
+        logging.warning("invalid %s request parameters", request)
+        return None
     logging.debug("enqueueing %s request with params %s", request, str(params))
+    # Create a future for the callback if the request is mount_info
+    future = None
+    if request == "mount_info":
+        from concurrent.futures import Future
+        future = Future()
+        original_callback = callback
+        def future_callback(*args, **kwargs):
+            if original_callback:
+                original_callback(*args, **kwargs)
+            future.set_result(args[-1])
+        callback = future_callback
+
     self.queue.put((request, store, params, callback, self.request_retry_count))
+    return future
 
   def _handle_request_from_store(self, store, params):
     if len(params) != 3:

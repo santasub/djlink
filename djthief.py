@@ -131,6 +131,7 @@ class MediaSourceWidget(QFrame):
         self.download_manager.progress_signal.connect(self.update_progress)
         self.download_manager.finished_signal.connect(self.download_finished)
         self.init_ui()
+        self.check_db_status()
 
     def init_ui(self):
         self.setFrameStyle(QFrame.Box | QFrame.Plain)
@@ -144,10 +145,19 @@ class MediaSourceWidget(QFrame):
         layout.addWidget(self.download_button)
         layout.addWidget(self.progress_bar)
 
+    def check_db_status(self):
+        # Disable download button until PDB is loaded
+        self.download_button.setEnabled(False)
+        self.parent.prodj.data.pdb.get_pdb(self.player_number, self.slot, self.db_loaded)
+
+    def db_loaded(self, db):
+        if db:
+            self.download_button.setEnabled(True)
+
     def start_download(self):
         self.download_button.setEnabled(False)
-        self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
         self.download_manager.download_all_songs()
 
     def update_progress(self, value):
