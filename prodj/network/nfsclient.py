@@ -37,6 +37,9 @@ class NfsClient:
 
   def stop(self):
     self.receiver.stop(self.loop)
+    # Wait for all tasks to complete
+    for task in self.active_tasks:
+        task.cancel()
     self.loop.call_soon_threadsafe(self.loop.stop)
     self.loop_thread.join()
     self.loop.close()
@@ -155,9 +158,13 @@ class NfsClient:
     if sync:
         return future.result(timeout=30)
 
-    task = self.loop.create_task(coro)
-    self.active_tasks.add(task)
-    task.add_done_callback(self.active_tasks.discard)
+    # Since we are not in an async context, we cannot create the task directly.
+    # We need to use call_soon_threadsafe to schedule the task creation.
+    def create_and_add_task():
+        task = self.loop.create_task(coro)
+        self.active_tasks.add(task)
+        task.add_done_callback(self.active_tasks.discard)
+    self.loop.call_soon_threadsafe(create_and_add_task)
     return future
 
   # download path from player with ip after trying to mount slot
