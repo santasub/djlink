@@ -186,6 +186,7 @@ if __name__ == '__main__':
     loglevels = ['debug', 'info', 'warning', 'error', 'critical', 'dump_packets']
     parser.add_argument('--loglevel', choices=loglevels, default='info',
                         help=f"Set the logging level (default: info). 'dump_packets' enables packet content logging.")
+    parser.add_argument('--logfile', help="Log to file instead of stdout")
     args = parser.parse_args()
 
     numeric_level = getattr(logging, args.loglevel.upper(), None)
@@ -193,7 +194,11 @@ if __name__ == '__main__':
         numeric_level = 0 # Special case for packet dumping
     elif not isinstance(numeric_level, int):
         raise ValueError(f'Invalid log level: {args.loglevel}')
-    logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
+
+    if args.logfile:
+        logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s', filename=args.logfile, filemode='w')
+    else:
+        logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
 
     prodj = ProDj()
     prodj.start()

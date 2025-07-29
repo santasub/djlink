@@ -15,7 +15,6 @@ class NfsClient:
     self.prodj = prodj
     self.loop = asyncio.new_event_loop()
     self.receiver = RpcReceiver()
-    self.active_tasks = set()
 
     self.rpc_auth_stamp = 0xdeadbeef
     self.rpc_sock = None
@@ -27,7 +26,7 @@ class NfsClient:
       "usb": "/C/"
     }
 
-    self.setDownloadChunkSize(4096) # + 142 bytes total overhead is still safe below 1500
+    self.setDownloadChunkSize(1280) # + 142 bytes total overhead is still safe below 1500
 
   def start(self):
     self.openSockets()
@@ -37,9 +36,6 @@ class NfsClient:
 
   def stop(self):
     self.receiver.stop(self.loop)
-    # Wait for all tasks to complete
-    for task in self.active_tasks:
-        task.cancel()
     self.loop.call_soon_threadsafe(self.loop.stop)
     self.loop_thread.join()
     self.loop.close()
@@ -152,19 +148,10 @@ class NfsClient:
   # if sync is true, wait for the result and return it directly (30 seconds timeout)
   def enqueue_download(self, ip, slot, src_path, dst_path=None, sync=False):
     logging.debug("enqueueing download of %s from %s", src_path, ip)
-
-    async def _download_wrapper():
-        try:
-            return await self.handle_download(ip, slot, src_path, dst_path)
-        except Exception as e:
-            logging.error(f"Error in download wrapper: {e}")
-            return None
-
-    future = asyncio.run_coroutine_threadsafe(_download_wrapper(), self.loop)
-
+    future = asyncio.run_coroutine_threadsafe(
+      self.handle_download(ip, slot, src_path, dst_path), self.loop)
     if sync:
-        return future.result(timeout=30)
-
+      return future.result(timeout=30)
     return future
 
   # download path from player with ip after trying to mount slot
