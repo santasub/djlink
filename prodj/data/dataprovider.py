@@ -42,7 +42,8 @@ class DataProvider(Thread):
   def stop(self):
     self.keep_running = False
     self.pdb.stop()
-    self.dbc.closeSocket(2)
+    for i in range(1,5):
+        self.dbc.closeSocket(i)
     self.metadata_store.stop()
     self.artwork_store.stop()
     self.waveform_store.stop()
