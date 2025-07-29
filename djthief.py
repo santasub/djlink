@@ -71,7 +71,7 @@ class DownloadManager(QObject):
 
     def download_all_songs(self):
         logging.info(f"Downloading all songs from player {self.player_number}:{self.slot}")
-        tracks = self.prodj.data.dbclient.query_list(self.player_number, self.slot, "title", [0], "title_request")
+        tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [0], "title_request")
         if tracks:
             self.tracks_to_download = len(tracks)
             self.tracks_downloaded = 0
@@ -125,7 +125,7 @@ class MediaSourceWidget(QFrame):
         self.download_button.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        tracks = self.parent.prodj.data.dbclient.query_list(self.player_number, self.slot, "title", [0], "title_request")
+        tracks = self.parent.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [0], "title_request")
         if tracks:
             self.progress_bar.setMaximum(len(tracks))
             self.download_manager.download_all_songs()
