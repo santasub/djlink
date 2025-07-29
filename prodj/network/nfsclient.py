@@ -27,7 +27,7 @@ class NfsClient:
       "usb": "/C/"
     }
 
-    self.setDownloadChunkSize(1280) # + 142 bytes total overhead is still safe below 1500
+    self.setDownloadChunkSize(4096) # + 142 bytes total overhead is still safe below 1500
 
   def start(self):
     self.openSockets()
@@ -160,19 +160,11 @@ class NfsClient:
             logging.error(f"Error in download wrapper: {e}")
             return None
 
-    coro = _download_wrapper()
-    future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+    future = asyncio.run_coroutine_threadsafe(_download_wrapper(), self.loop)
 
     if sync:
         return future.result(timeout=30)
 
-    # Since we are not in an async context, we cannot create the task directly.
-    # We need to use call_soon_threadsafe to schedule the task creation.
-    def create_and_add_task():
-        task = self.loop.create_task(coro)
-        self.active_tasks.add(task)
-        task.add_done_callback(self.active_tasks.discard)
-    self.loop.call_soon_threadsafe(create_and_add_task)
     return future
 
   # download path from player with ip after trying to mount slot

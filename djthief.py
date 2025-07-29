@@ -2,6 +2,7 @@
 
 import logging
 import sys
+import os
 from PyQt5.QtWidgets import QApplication, QWidget, QGridLayout, QPushButton, QLabel, QVBoxLayout, QFrame, QProgressBar
 from PyQt5.QtCore import pyqtSignal, Qt, QObject
 import signal
@@ -149,12 +150,15 @@ class MediaSourceWidget(QFrame):
         # Disable download button until PDB is loaded
         self.download_button.setEnabled(False)
         # The get_db function in PDBProvider is synchronous, so we can just call it and check the result
-        try:
-            db = self.parent.prodj.data.pdb.get_db(self.player_number, self.slot)
-            if db:
-                self.download_button.setEnabled(True)
-        except Exception as e:
-            logging.error(f"Failed to get PDB database: {e}")
+        if not os.path.exists(f"databases/player-{self.player_number}-{self.slot}.pdb"):
+            try:
+                db = self.parent.prodj.data.pdb.get_db(self.player_number, self.slot)
+                if db:
+                    self.download_button.setEnabled(True)
+            except Exception as e:
+                logging.error(f"Failed to get PDB database: {e}")
+        else:
+            self.download_button.setEnabled(True)
 
     def start_download(self):
         self.download_button.setEnabled(False)
