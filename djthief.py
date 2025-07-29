@@ -72,26 +72,42 @@ class DownloadManager(QObject):
     def download_all_songs(self):
         logging.info(f"Downloading all songs from player {self.player_number}:{self.slot}")
         try:
-            tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [0], "title_request")
+            # First, get the total number of tracks
+            client = self.prodj.cl.getClient(self.player_number)
+            if self.slot == "usb":
+                track_count = client.usb_info.get("track_count", 0)
+            elif self.slot == "sd":
+                track_count = client.sd_info.get("track_count", 0)
+            else:
+                track_count = 0
+
+            if track_count == 0:
+                self.finished_signal.emit()
+                return
+
+            self.tracks_to_download = track_count
+            self.tracks_downloaded = 0
+            self.parent.progress_bar.setMaximum(self.tracks_to_download)
+
+            # Then, get the track list in chunks
+            chunk_size = 100
+            for i in range(0, track_count, chunk_size):
+                tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [i, chunk_size], "title_request")
+                if tracks:
+                    for track in tracks:
+                        future = self.prodj.data.get_mount_info(
+                            self.player_number,
+                            self.slot,
+                            track['track_id'],
+                            self.prodj.nfs.enqueue_download_from_mount_info
+                        )
+                        future.add_done_callback(self.download_done_callback)
+                else:
+                    break
         except Exception as e:
             logging.error(f"Failed to get track list: {e}")
             self.finished_signal.emit()
             return
-
-        if tracks:
-            self.tracks_to_download = len(tracks)
-            self.tracks_downloaded = 0
-            self.parent.progress_bar.setMaximum(self.tracks_to_download)
-            for track in tracks:
-                future = self.prodj.data.get_mount_info(
-                    self.player_number,
-                    self.slot,
-                    track['track_id'],
-                    self.prodj.nfs.enqueue_download_from_mount_info
-                )
-                future.add_done_callback(self.download_done_callback)
-        else:
-            self.finished_signal.emit()
 
     def download_done_callback(self, future):
         if future.exception() is not None:

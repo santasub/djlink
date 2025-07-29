@@ -281,10 +281,14 @@ class DBClient:
       query["args"].append({"type": "int32", "value": 0 if id_list[1]>0 else 1}) # 1 -> get folder, 0 -> get playlist
     else: # for any (non-playlist) "*_by_*_request"
       query["args"].append({"type": "int32", "value": sort_id})
-      for item_id in id_list:
-        if item_id == 0: # we use id 0 for "ALL", dbserver expects all bits set
-          item_id = 0xffffffff
-        query["args"].append({"type": "int32", "value": item_id})
+      if len(id_list) == 2: # chunked request
+          query["args"].append({"type": "int32", "value": id_list[0]})
+          query["args"].append({"type": "int32", "value": id_list[1]})
+      else:
+        for item_id in id_list:
+          if item_id == 0: # we use id 0 for "ALL", dbserver expects all bits set
+            item_id = 0xffffffff
+          query["args"].append({"type": "int32", "value": item_id})
     data = packets.DBMessage.build(query)
     logging.debug("query_list request: {}".format(query))
     self.socksnd(sock, data)
