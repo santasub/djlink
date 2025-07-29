@@ -148,7 +148,7 @@ class MediaSourceWidget(QFrame):
     def check_db_status(self):
         # Disable download button until PDB is loaded
         self.download_button.setEnabled(False)
-        self.parent.prodj.data.pdb.get_pdb(self.player_number, self.slot, self.db_loaded)
+        self.parent.prodj.data.pdb.get_db(self.player_number, self.slot, self.db_loaded)
 
     def db_loaded(self, db):
         if db:
