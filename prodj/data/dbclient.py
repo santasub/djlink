@@ -281,9 +281,9 @@ class DBClient:
       query["args"].append({"type": "int32", "value": 0 if id_list[1]>0 else 1}) # 1 -> get folder, 0 -> get playlist
     else: # for any (non-playlist) "*_by_*_request"
       query["args"].append({"type": "int32", "value": sort_id})
-      if len(id_list) == 2: # chunked request
-          query["args"].append({"type": "int32", "value": id_list[0]})
-          query["args"].append({"type": "int32", "value": id_list[1]})
+      # Bit of a hack to support chunked requests for title_request
+      if request_type == "title_request" and len(id_list) == 2:
+          query["args"].append({"type": "int32", "value": 0xffffffff}) # All items
       else:
         for item_id in id_list:
           if item_id == 0: # we use id 0 for "ALL", dbserver expects all bits set
@@ -309,12 +309,16 @@ class DBClient:
 
     # i could successfully receive hundreds of entries at once on xdj 1000
     # thus i do not fragment render requests here
+    offset = 0
+    if request_type == "title_request" and len(id_list) == 2:
+        offset = id_list[0]
+        entry_count = id_list[1]
     query = {
       "transaction_id": self.getTransactionId(player_number),
       "type": "render",
       "args": [
         {"type": "int32", "value": self.own_player_number<<24 | 1<<16 | slot_id<<8 | 1},
-        {"type": "int32", "value": 0}, # entry offset
+        {"type": "int32", "value": offset}, # entry offset
         {"type": "int32", "value": entry_count}, # entry count
         {"type": "int32", "value": 0},
         {"type": "int32", "value": entry_count}, # entry count
