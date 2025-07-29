@@ -152,7 +152,15 @@ class NfsClient:
   # if sync is true, wait for the result and return it directly (30 seconds timeout)
   def enqueue_download(self, ip, slot, src_path, dst_path=None, sync=False):
     logging.debug("enqueueing download of %s from %s", src_path, ip)
-    coro = self.handle_download(ip, slot, src_path, dst_path)
+
+    async def _download_wrapper():
+        try:
+            return await self.handle_download(ip, slot, src_path, dst_path)
+        except Exception as e:
+            logging.error(f"Error in download wrapper: {e}")
+            return None
+
+    coro = _download_wrapper()
     future = asyncio.run_coroutine_threadsafe(coro, self.loop)
 
     if sync:
