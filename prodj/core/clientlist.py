@@ -258,6 +258,7 @@ class ClientList:
 
       new_usb_state = status_packet.content.usb_state
       if c.usb_state != new_usb_state:
+        c.previous_loaded_slot = "usb"
         c.usb_state = new_usb_state
         if new_usb_state != "loaded":
           c.usb_info = {}
@@ -266,6 +267,7 @@ class ClientList:
         self.mediaChanged(c.player_number, "usb")
       new_sd_state = status_packet.content.sd_state
       if c.sd_state != new_sd_state:
+        c.previous_loaded_slot = "sd"
         c.sd_state = new_sd_state
         if new_sd_state != "loaded":
           c.sd_info = {}
@@ -341,6 +343,7 @@ class Client:
     self.sd_info = {}
     self.loaded_player_number = 0
     self.loaded_slot = "empty"
+    self.previous_loaded_slot = "empty"
     self.track_analyze_type = "unknown"
     self.state = []
     self.track_number = None

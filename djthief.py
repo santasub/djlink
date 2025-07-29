@@ -22,6 +22,7 @@ class DjThief(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        self.setMinimumSize(400, 200)
         self.prodj.set_client_change_callback(self.client_change_callback)
         self.show()
 
@@ -39,10 +40,16 @@ class DjThief(QWidget):
             return
 
         if c.loaded_slot in ["sd", "usb"]:
-            key = f"{c.ip_addr}:{c.loaded_slot}"
+            key = f"{c.player_number}:{c.loaded_slot}"
             if key not in self.media_sources:
-                self.media_sources[key] = MediaSourceWidget(self, c.ip_addr, c.loaded_slot, player_number)
-                self.layout.addWidget(self.media_sources[key], len(self.media_sources) - 1, 0)
+                self.media_sources[key] = MediaSourceWidget(self, c.ip_addr, c.loaded_slot, c.player_number)
+                self.layout.addWidget(self.media_sources[key], (len(self.media_sources) -1) // 2, (len(self.media_sources) - 1) % 2)
+        else:
+            # Media removed, remove corresponding media source
+            key = f"{c.player_number}:{c.previous_loaded_slot}"
+            if key in self.media_sources:
+                self.media_sources[key].deleteLater()
+                del self.media_sources[key]
 
 class DownloadManager(QObject):
     progress_signal = pyqtSignal(int)
@@ -129,7 +136,20 @@ class MediaSourceWidget(QFrame):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(levelname)-7s %(module)s: %(message)s')
+    import argparse
+    parser = argparse.ArgumentParser(description='Python ProDJ Link Thief')
+    loglevels = ['debug', 'info', 'warning', 'error', 'critical', 'dump_packets']
+    parser.add_argument('--loglevel', choices=loglevels, default='info',
+                        help=f"Set the logging level (default: info). 'dump_packets' enables packet content logging.")
+    args = parser.parse_args()
+
+    numeric_level = getattr(logging, args.loglevel.upper(), None)
+    if args.loglevel == 'dump_packets':
+        numeric_level = 0 # Special case for packet dumping
+    elif not isinstance(numeric_level, int):
+        raise ValueError(f'Invalid log level: {args.loglevel}')
+    logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
+
     prodj = ProDj()
     prodj.start()
 

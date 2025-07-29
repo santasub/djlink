@@ -71,8 +71,9 @@ class ProDj(Thread):
     self.vcdj.start()
 
   def vcdj_disable(self):
-    self.vcdj.stop()
-    self.vcdj.join()
+    if self.vcdj.is_alive():
+      self.vcdj.stop()
+      self.vcdj.join()
 
   def vcdj_set_iface(self):
     if self.own_ip is not None:
