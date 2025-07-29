@@ -148,11 +148,13 @@ class MediaSourceWidget(QFrame):
     def check_db_status(self):
         # Disable download button until PDB is loaded
         self.download_button.setEnabled(False)
-        self.parent.prodj.data.pdb.get_db(self.player_number, self.slot, self.db_loaded)
-
-    def db_loaded(self, db):
-        if db:
-            self.download_button.setEnabled(True)
+        # The get_db function in PDBProvider is synchronous, so we can just call it and check the result
+        try:
+            db = self.parent.prodj.data.pdb.get_db(self.player_number, self.slot)
+            if db:
+                self.download_button.setEnabled(True)
+        except Exception as e:
+            logging.error(f"Failed to get PDB database: {e}")
 
     def start_download(self):
         self.download_button.setEnabled(False)
