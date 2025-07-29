@@ -195,10 +195,12 @@ if __name__ == '__main__':
     elif not isinstance(numeric_level, int):
         raise ValueError(f'Invalid log level: {args.loglevel}')
 
+    log_format = '%(levelname)-7s %(module)s: %(message)s'
+    logging.basicConfig(level=numeric_level, format=log_format)
     if args.logfile:
-        logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s', filename=args.logfile, filemode='w')
-    else:
-        logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
+        file_handler = logging.FileHandler(args.logfile, mode='w')
+        file_handler.setFormatter(logging.Formatter(log_format))
+        logging.getLogger().addHandler(file_handler)
 
     prodj = ProDj()
     prodj.start()
