@@ -67,6 +67,11 @@ class ProDj(Thread):
     #self.data.dbc.own_player_number = vcdj_player_number
 
   def vcdj_enable(self):
+    if self.own_ip is None:
+        # If we don't have an IP address yet, we can't start the VCDJ.
+        # We'll try again later when we have an IP.
+        self.need_own_ip = OwnIpStatus.waiting
+        return
     self.vcdj_set_iface()
     self.vcdj.start()
 
@@ -111,6 +116,8 @@ class ProDj(Thread):
       self.own_ip = guess_own_iface(self.cl.getClientIps(), self.iface)
       if self.own_ip is not None:
         logging.info("Guessed own interface {} ip {} mask {} mac {}".format(*self.own_ip))
+        if self.need_own_ip == OwnIpStatus.waiting:
+            self.vcdj_enable()
         self.vcdj_set_iface()
     packets_dump.dump_keepalive_packet(packet)
 

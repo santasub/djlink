@@ -1,12 +1,12 @@
-DEBUG   datastore: 0x7f329b37e810 initialized
-DEBUG   datastore: 0x7f329b37fad0 initialized
-DEBUG   datastore: 0x7f329b37fb30 initialized
-DEBUG   datastore: 0x7f329b37fb90 initialized
-DEBUG   datastore: 0x7f329b37fa70 initialized
-DEBUG   datastore: 0x7f329b37fbf0 initialized
-DEBUG   datastore: 0x7f329b37fcb0 initialized
-DEBUG   datastore: 0x7f329b37fd70 initialized
-DEBUG   datastore: 0x7f329b37fe90 initialized
+DEBUG   datastore: 0x7f42bb986870 initialized
+DEBUG   datastore: 0x7f42bb987b30 initialized
+DEBUG   datastore: 0x7f42bb987bf0 initialized
+DEBUG   datastore: 0x7f42bb987b90 initialized
+DEBUG   datastore: 0x7f42bb987c50 initialized
+DEBUG   datastore: 0x7f42bb987d10 initialized
+DEBUG   datastore: 0x7f42bb987cb0 initialized
+DEBUG   datastore: 0x7f42bb987ad0 initialized
+DEBUG   datastore: 0x7f42bb987ef0 initialized
 DEBUG   selector_events: Using selector: EpollSelector
 INFO    prodj: Listening on 0.0.0.0:50000 for keepalive packets
 INFO    prodj: Listening on 0.0.0.0:50001 for beat packets
@@ -14,4 +14,3 @@ INFO    prodj: Listening on 0.0.0.0:50002 for status packets
 DEBUG   dataprovider: DataProvider starting
 DEBUG   prodj: starting main loop
 INFO    prodj: Player number set to 5
-INFO    vcdj: Starting virtual cdj with player number 5
