@@ -115,7 +115,7 @@ class DBClient:
     # however, this messes up rendering on the players sometimes (i.e. when querying metadata and player has browser opened)
     # alternatively, we can use a player number from 1 to 4 without rendering issues, but then only max. 3 real players can be used
     self.own_player_number = 0
-    self.parse_error_count = 40
+    self.parse_error_count = 80
     self.receive_timeout_count = 3
 
   def parse_metadata_payload(self, payload):

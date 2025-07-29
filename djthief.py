@@ -140,6 +140,12 @@ class MediaSourceWidget(QFrame):
         self.progress_bar.setVisible(False)
 
 
+def cleanup_databases():
+    import os
+    import glob
+    for f in glob.glob("databases/player-*-*.pdb"):
+        os.remove(f)
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Python ProDJ Link Thief')
@@ -168,3 +174,4 @@ if __name__ == '__main__':
     app.exec()
     logging.info("Shutting down...")
     prodj.stop()
+    cleanup_databases()
