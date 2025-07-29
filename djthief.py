@@ -71,10 +71,17 @@ class DownloadManager(QObject):
 
     def download_all_songs(self):
         logging.info(f"Downloading all songs from player {self.player_number}:{self.slot}")
-        tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [0], "title_request")
+        try:
+            tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [0], "title_request")
+        except Exception as e:
+            logging.error(f"Failed to get track list: {e}")
+            self.finished_signal.emit()
+            return
+
         if tracks:
             self.tracks_to_download = len(tracks)
             self.tracks_downloaded = 0
+            self.parent.progress_bar.setMaximum(self.tracks_to_download)
             for track in tracks:
                 future = self.prodj.data.get_mount_info(
                     self.player_number,
@@ -125,12 +132,7 @@ class MediaSourceWidget(QFrame):
         self.download_button.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        tracks = self.parent.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [0], "title_request")
-        if tracks:
-            self.progress_bar.setMaximum(len(tracks))
-            self.download_manager.download_all_songs()
-        else:
-            self.download_finished()
+        self.download_manager.download_all_songs()
 
     def update_progress(self, value):
         self.progress_bar.setValue(value)
