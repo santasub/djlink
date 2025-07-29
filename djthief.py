@@ -3,6 +3,7 @@
 import logging
 import sys
 import os
+import asyncio
 from PyQt5.QtWidgets import QApplication, QWidget, QGridLayout, QPushButton, QLabel, QVBoxLayout, QFrame, QProgressBar
 from PyQt5.QtCore import pyqtSignal, Qt, QObject
 import signal
@@ -72,8 +73,11 @@ class DownloadManager(QObject):
 
     def download_all_songs(self):
         logging.info(f"Downloading all songs from player {self.player_number}:{self.slot}")
+        # Run the async download logic in the event loop of the nfs client
+        asyncio.run_coroutine_threadsafe(self.async_download_all_songs(), self.prodj.nfs.loop)
+
+    async def async_download_all_songs(self):
         try:
-            # First, get the total number of tracks
             client = self.prodj.cl.getClient(self.player_number)
             if self.slot == "usb":
                 track_count = client.usb_info.get("track_count", 0)
@@ -90,36 +94,88 @@ class DownloadManager(QObject):
             self.tracks_downloaded = 0
             self.parent.progress_bar.setMaximum(self.tracks_to_download)
 
-            # Then, get the track list in chunks
+            all_tracks = []
             chunk_size = 100
             for i in range(0, track_count, chunk_size):
                 tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [i, chunk_size], "title_request")
                 if tracks:
-                    for track in tracks:
-                        future = self.prodj.data.get_mount_info(
-                            self.player_number,
-                            self.slot,
-                            track['track_id'],
-                            self.prodj.nfs.enqueue_download_from_mount_info
-                        )
-                        future.add_done_callback(self.download_done_callback)
+                    all_tracks.extend(tracks)
                 else:
                     break
+
+            semaphore = asyncio.Semaphore(4)
+            tasks = [self.download_track(semaphore, track) for track in all_tracks]
+            await asyncio.gather(*tasks)
+
         except Exception as e:
             logging.error(f"Failed to get track list: {e}")
+        finally:
             self.finished_signal.emit()
-            return
 
-    def download_done_callback(self, future):
-        if future.exception() is not None:
-            logging.error("download failed (callback): %s", future.exception())
-        else:
-            logging.info("download finished: %s", future.result())
+    async def download_track(self, semaphore, track):
+        async with semaphore:
+            try:
+                future = self.prodj.data.get_mount_info(
+                    self.player_number,
+                    self.slot,
+                    track['track_id'],
+                    self.prodj.nfs.enqueue_download_from_mount_info
+                )
+                # get_mount_info is not async, but it returns a future. We need to await it.
+                # However, since it's being run in a different thread context, we can't directly await it.
+                # The callback system is the way to go. Let's adapt.
+                # The future from get_mount_info resolves when the download is enqueued, not finished.
+                # The future inside *that* future is the one we need.
 
-        self.tracks_downloaded += 1
-        self.progress_signal.emit(self.tracks_downloaded)
-        if self.tracks_downloaded == self.tracks_to_download:
-            self.finished_signal.emit()
+                # Let's create an awaitable future
+                loop = asyncio.get_running_loop()
+                aio_future = loop.create_future()
+
+                def download_done_callback(f):
+                    if f.exception() is not None:
+                        logging.error("download failed (callback): %s", f.exception())
+                        loop.call_soon_threadsafe(aio_future.set_exception, f.exception())
+                    else:
+                        logging.info("download finished: %s", f.result())
+                        loop.call_soon_threadsafe(aio_future.set_result, f.result())
+
+                    self.tracks_downloaded += 1
+                    self.progress_signal.emit(self.tracks_downloaded)
+
+                # The future returned by enqueue_download_from_mount_info is what we need to add the callback to.
+                # get_mount_info itself returns a future that resolves to the result of the enqueue function.
+                enqueue_future_future = self.prodj.data.get_mount_info(
+                    self.player_number,
+                    self.slot,
+                    track['track_id'],
+                    self.prodj.nfs.enqueue_download_from_mount_info
+                )
+
+                def on_enqueue_done(f):
+                    try:
+                        # The result of this future is the actual download future
+                        download_future = f.result()
+                        if download_future:
+                            download_future.add_done_callback(download_done_callback)
+                        else:
+                            # Handle case where enqueueing failed
+                            exc = RuntimeError("Failed to enqueue download.")
+                            loop.call_soon_threadsafe(aio_future.set_exception, exc)
+                            self.tracks_downloaded += 1
+                            self.progress_signal.emit(self.tracks_downloaded)
+
+                    except Exception as e:
+                        logging.error(f"Error during enqueue process: {e}")
+                        loop.call_soon_threadsafe(aio_future.set_exception, e)
+                        self.tracks_downloaded += 1
+                        self.progress_signal.emit(self.tracks_downloaded)
+
+                enqueue_future_future.add_done_callback(on_enqueue_done)
+
+                await aio_future
+
+            except Exception as e:
+                logging.error(f"Failed to download track {track.get('track_id')}: {e}")
 
 class MediaSourceWidget(QFrame):
     def __init__(self, parent, ip_addr, slot, player_number):
@@ -214,5 +270,8 @@ if __name__ == '__main__':
 
     app.exec()
     logging.info("Shutting down...")
+    # Unmount all NFS mounts before stopping prodj
+    unmount_future = asyncio.run_coroutine_threadsafe(prodj.nfs.unmount_all(), prodj.nfs.loop)
+    unmount_future.result(timeout=10) # Wait for unmount to complete
     prodj.stop()
     cleanup_databases()

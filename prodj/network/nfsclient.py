@@ -25,6 +25,7 @@ class NfsClient:
       "sd": "/B/",
       "usb": "/C/"
     }
+    self.mounts = {}
 
     self.setDownloadChunkSize(1280) # + 142 bytes total overhead is still safe below 1500
 
@@ -179,23 +180,54 @@ class NfsClient:
     future.add_done_callback(generic_file_download_done_callback)
     return future
 
-  async def handle_download(self, ip, slot, src_path, dst_path):
-    logging.info("handling download of %s@%s:%s to %s",
-      ip, slot, src_path, dst_path)
+  async def get_mount(self, ip, slot):
+    if (ip, slot) in self.mounts:
+      return self.mounts[(ip, slot)]
+
     if slot not in self.export_by_slot:
-      raise RuntimeError("Unable to download from slot %s", slot)
+      raise RuntimeError(f"Unable to mount slot {slot}")
     export = self.export_by_slot[slot]
 
     mount_port = await self.PortmapGetPort(ip, "mount", MountVersion, "udp")
-    logging.debug("mount port of player %s: %d", ip, mount_port)
-
-    nfs_port = await self.PortmapGetPort(ip, "nfs", NfsVersion, "udp")
-    logging.debug("nfs port of player %s: %d", ip, nfs_port)
+    logging.debug(f"mount port of player {ip}: {mount_port}")
 
     mount_handle = await self.MountMnt((ip, mount_port), export)
+    self.mounts[(ip, slot)] = mount_handle
+    return mount_handle
+
+  async def handle_download(self, ip, slot, src_path, dst_path):
+    logging.info("handling download of %s@%s:%s to %s",
+      ip, slot, src_path, dst_path)
+
+    nfs_port = await self.PortmapGetPort(ip, "nfs", NfsVersion, "udp")
+    logging.debug(f"nfs port of player {ip}: {nfs_port}")
+
+    mount_handle = await self.get_mount(ip, slot)
     download = NfsDownload(self, (ip, nfs_port), mount_handle, src_path)
     if dst_path is not None:
       download.setFilename(dst_path)
 
     # TODO: NFS UMNT
     return await download.start()
+
+  async def unmount(self, ip, slot):
+    if (ip, slot) not in self.mounts:
+      logging.warning(f"unmount called for {ip}:{slot} but no mount found")
+      return
+
+    if slot not in self.export_by_slot:
+      raise RuntimeError(f"Unable to unmount slot {slot}")
+    export = self.export_by_slot[slot]
+
+    mount_port = await self.PortmapGetPort(ip, "mount", MountVersion, "udp")
+    data = MountMntArgs.build(export)
+    await self.RpcCall((ip, mount_port), "mount", MountVersion, "umnt", data)
+    del self.mounts[(ip, slot)]
+    logging.info(f"Unmounted {ip}:{slot}")
+
+  async def unmount_all(self):
+    for (ip, slot) in list(self.mounts.keys()):
+      try:
+        await self.unmount(ip, slot)
+      except Exception as e:
+        logging.error(f"Failed to unmount {ip}:{slot}: {e}")

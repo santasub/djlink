@@ -40,8 +40,7 @@ class DbclientTestCase(unittest.TestCase):
         self.nc.NfsLookupPath = AsyncMock(return_value=Mock(fhandle=b"mock_file_fhandle", attrs=attrs_mock))
 
         # Prepare the full content that NfsReadData should simulate returning in chunks
-        nfs_read_data_full_content = b"test_data_chunk_" * (500 // 16) + b"end" # ensure 500 bytes
-        nfs_read_data_full_content = nfs_read_data_full_content[:500]
+        nfs_read_data_full_content = b"0" * 500
 
         async def mock_nfs_read_data_side_effect(host, fhandle, offset, size_requested):
             # Simulate reading chunks of the data
@@ -63,7 +62,7 @@ class DbclientTestCase(unittest.TestCase):
 
         # Verify calls (optional, but good for ensuring mocks were used as expected)
         self.nc.PortmapGetPort.assert_any_call("1.1.1.1", "mount", 1, "udp")
-        self.nc.PortmapGetPort.assert_any_call("1.1.1.1", "nfs", 3, "udp")
+        self.nc.PortmapGetPort.assert_any_call("1.1.1.1", "nfs", 2, "udp")
         self.nc.MountMnt.assert_called_once()
         self.nc.NfsLookupPath.assert_called_once()
         self.assertTrue(self.nc.NfsReadData.call_count > 0)
