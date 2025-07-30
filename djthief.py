@@ -72,110 +72,134 @@ class DownloadManager(QObject):
         self.tracks_downloaded = 0
 
     def download_all_songs(self):
-        logging.info(f"Downloading all songs from player {self.player_number}:{self.slot}")
+        # This function is now much simpler. It just needs to trigger the core
+        # download function and wire up the progress reporting.
+
+        def progress_callback(downloaded, total):
+            # This callback will be called from the asyncio thread, so we need
+            # to be careful with GUI updates. We can emit a signal.
+            # Here we just update the progress bar's max value and current value.
+            if self.parent.progress_bar.maximum() != total:
+                self.parent.progress_bar.setMaximum(total)
+            self.progress_signal.emit(downloaded)
+
         # Run the async download logic in the event loop of the nfs client
-        asyncio.run_coroutine_threadsafe(self.async_download_all_songs(), self.prodj.nfs.loop)
+        future = asyncio.run_coroutine_threadsafe(
+            run_download_session(self.prodj, self.player_number, self.slot, progress_callback),
+            self.prodj.nfs.loop
+        )
+        # Add a callback to the future to re-enable the button when done
+        future.add_done_callback(lambda f: self.finished_signal.emit())
 
-    async def async_download_all_songs(self):
-        try:
-            client = self.prodj.cl.getClient(self.player_number)
-            if self.slot == "usb":
-                track_count = client.usb_info.get("track_count", 0)
-            elif self.slot == "sd":
-                track_count = client.sd_info.get("track_count", 0)
+async def run_download_session(prodj, player_number, slot, progress_callback=None, dry_run=False):
+    """
+    Core logic for downloading all tracks from a given player and slot.
+    Can be used by both CLI and GUI.
+    """
+    if dry_run:
+        logging.info(f"Starting DRY RUN session for player {player_number}:{slot}")
+    else:
+        logging.info(f"Starting download session for player {player_number}:{slot}")
+
+    # Helper to emit progress if a callback is provided
+    def report_progress(downloaded, total):
+        if progress_callback:
+            progress_callback(downloaded, total)
+
+    try:
+        client = prodj.cl.getClient(player_number)
+        if not client:
+            logging.error(f"Player {player_number} not found.")
+            return
+
+        if slot == "usb":
+            track_count = client.usb_info.get("track_count", 0)
+        elif slot == "sd":
+            track_count = client.sd_info.get("track_count", 0)
+        else:
+            track_count = 0
+
+        if track_count == 0:
+            logging.info("No tracks to download.")
+            report_progress(0, 0)
+            return
+
+        logging.info(f"Found {track_count} tracks to download.")
+        report_progress(0, track_count)
+
+        all_tracks = []
+        chunk_size = 100
+        for i in range(0, track_count, chunk_size):
+            tracks = prodj.data.dbc.query_list(player_number, slot, "title", [i, chunk_size], "title_request")
+            if tracks:
+                all_tracks.extend(tracks)
             else:
-                track_count = 0
+                break
 
-            if track_count == 0:
-                self.finished_signal.emit()
-                return
+        tracks_downloaded = 0
 
-            self.tracks_to_download = track_count
-            self.tracks_downloaded = 0
-            self.parent.progress_bar.setMaximum(self.tracks_to_download)
+        async def download_track(semaphore, track):
+            nonlocal tracks_downloaded
+            async with semaphore:
+                try:
+                    if dry_run:
+                        logging.info(f"[DRY RUN] Would download: {track.get('mount_path')}")
+                        await asyncio.sleep(0.01) # Simulate some work
+                        tracks_downloaded += 1
+                        report_progress(tracks_downloaded, track_count)
+                        return
 
-            all_tracks = []
-            chunk_size = 100
-            for i in range(0, track_count, chunk_size):
-                tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [i, chunk_size], "title_request")
-                if tracks:
-                    all_tracks.extend(tracks)
-                else:
-                    break
+                    # This logic remains complex due to the underlying library's structure
+                    loop = asyncio.get_running_loop()
+                    aio_future = loop.create_future()
 
-            semaphore = asyncio.Semaphore(4)
-            tasks = [self.download_track(semaphore, track) for track in all_tracks]
-            await asyncio.gather(*tasks)
-
-        except Exception as e:
-            logging.error(f"Failed to get track list: {e}")
-        finally:
-            self.finished_signal.emit()
-
-    async def download_track(self, semaphore, track):
-        async with semaphore:
-            try:
-                future = self.prodj.data.get_mount_info(
-                    self.player_number,
-                    self.slot,
-                    track['track_id'],
-                    self.prodj.nfs.enqueue_download_from_mount_info
-                )
-                # get_mount_info is not async, but it returns a future. We need to await it.
-                # However, since it's being run in a different thread context, we can't directly await it.
-                # The callback system is the way to go. Let's adapt.
-                # The future from get_mount_info resolves when the download is enqueued, not finished.
-                # The future inside *that* future is the one we need.
-
-                # Let's create an awaitable future
-                loop = asyncio.get_running_loop()
-                aio_future = loop.create_future()
-
-                def download_done_callback(f):
-                    if f.exception() is not None:
-                        logging.error("download failed (callback): %s", f.exception())
-                        loop.call_soon_threadsafe(aio_future.set_exception, f.exception())
-                    else:
-                        logging.info("download finished: %s", f.result())
-                        loop.call_soon_threadsafe(aio_future.set_result, f.result())
-
-                    self.tracks_downloaded += 1
-                    self.progress_signal.emit(self.tracks_downloaded)
-
-                # The future returned by enqueue_download_from_mount_info is what we need to add the callback to.
-                # get_mount_info itself returns a future that resolves to the result of the enqueue function.
-                enqueue_future_future = self.prodj.data.get_mount_info(
-                    self.player_number,
-                    self.slot,
-                    track['track_id'],
-                    self.prodj.nfs.enqueue_download_from_mount_info
-                )
-
-                def on_enqueue_done(f):
-                    try:
-                        # The result of this future is the actual download future
-                        download_future = f.result()
-                        if download_future:
-                            download_future.add_done_callback(download_done_callback)
+                    def download_done_callback(f):
+                        nonlocal tracks_downloaded
+                        if f.exception() is not None:
+                            logging.error(f"Download failed for track {track.get('track_id')}: {f.exception()}")
+                            loop.call_soon_threadsafe(aio_future.set_exception, f.exception())
                         else:
-                            # Handle case where enqueueing failed
-                            exc = RuntimeError("Failed to enqueue download.")
-                            loop.call_soon_threadsafe(aio_future.set_exception, exc)
-                            self.tracks_downloaded += 1
-                            self.progress_signal.emit(self.tracks_downloaded)
+                            logging.info(f"Download finished: {f.result()}")
+                            loop.call_soon_threadsafe(aio_future.set_result, f.result())
 
-                    except Exception as e:
-                        logging.error(f"Error during enqueue process: {e}")
-                        loop.call_soon_threadsafe(aio_future.set_exception, e)
-                        self.tracks_downloaded += 1
-                        self.progress_signal.emit(self.tracks_downloaded)
+                        tracks_downloaded += 1
+                        report_progress(tracks_downloaded, track_count)
 
-                enqueue_future_future.add_done_callback(on_enqueue_done)
+                    enqueue_future_future = prodj.data.get_mount_info(
+                        player_number, slot, track['track_id'], prodj.nfs.enqueue_download_from_mount_info
+                    )
 
-                await aio_future
+                    def on_enqueue_done(f):
+                        nonlocal tracks_downloaded
+                        try:
+                            download_future = f.result()
+                            if download_future:
+                                download_future.add_done_callback(download_done_callback)
+                            else:
+                                exc = RuntimeError(f"Failed to enqueue download for track {track.get('track_id')}.")
+                                loop.call_soon_threadsafe(aio_future.set_exception, exc)
+                                tracks_downloaded += 1
+                                report_progress(tracks_downloaded, track_count)
+                        except Exception as e:
+                            logging.error(f"Error during enqueue for track {track.get('track_id')}: {e}")
+                            loop.call_soon_threadsafe(aio_future.set_exception, e)
+                            tracks_downloaded += 1
+                            report_progress(tracks_downloaded, track_count)
 
-            except Exception as e:
-                logging.error(f"Failed to download track {track.get('track_id')}: {e}")
+                    enqueue_future_future.add_done_callback(on_enqueue_done)
+                    await aio_future
+                except Exception as e:
+                    logging.error(f"Failed to process download for track {track.get('track_id')}: {e}")
+
+        semaphore = asyncio.Semaphore(4)
+        tasks = [download_track(semaphore, track) for track in all_tracks]
+        await asyncio.gather(*tasks)
+
+    except Exception as e:
+        logging.error(f"An error occurred during the download session: {e}")
+    finally:
+        logging.info("Download session finished.")
+
 
 class MediaSourceWidget(QFrame):
     def __init__(self, parent, ip_addr, slot, player_number):
@@ -243,6 +267,12 @@ if __name__ == '__main__':
     parser.add_argument('--loglevel', choices=loglevels, default='info',
                         help=f"Set the logging level (default: info). 'dump_packets' enables packet content logging.")
     parser.add_argument('--logfile', help="Log to file instead of stdout")
+    parser.add_argument('--no-gui', action='store_true', help="Run in command-line mode without a GUI.")
+    parser.add_argument('--player', type=int, help="Player number to target in CLI mode.")
+    parser.add_argument('--slot', choices=['usb', 'sd'], help="Media slot to target in CLI mode.")
+    parser.add_argument('--mock-player', action='store_true', help="Use a mock player for testing.")
+    parser.add_argument('--list', action='store_true', help="List available players and exit.")
+    parser.add_argument('--dry-run', action='store_true', help="List tracks that would be downloaded, but don't download them.")
     args = parser.parse_args()
 
     numeric_level = getattr(logging, args.loglevel.upper(), None)
@@ -263,15 +293,119 @@ if __name__ == '__main__':
     prodj.vcdj_set_player_number(5)
     prodj.vcdj_enable()
 
-    app = QApplication(sys.argv)
-    djthief = DjThief(prodj)
+    if args.mock_player:
+        # Create a mock client and add it to the client list
+        from unittest.mock import Mock, patch
+        mock_client = Mock()
+        mock_client.player_number = args.player or 2
+        mock_client.ip_addr = "192.168.1.99"
+        mock_client.loaded_slot = args.slot or "usb"
+        mock_client.usb_info = {"track_count": 2}
+        mock_client.sd_info = {"track_count": 0}
 
-    signal.signal(signal.SIGINT, lambda s, f: app.quit())
+        # Directly mock the getClient method
+        prodj.cl.getClient = Mock(return_value=mock_client)
 
-    app.exec()
-    logging.info("Shutting down...")
-    # Unmount all NFS mounts before stopping prodj
-    unmount_future = asyncio.run_coroutine_threadsafe(prodj.nfs.unmount_all(), prodj.nfs.loop)
-    unmount_future.result(timeout=10) # Wait for unmount to complete
-    prodj.stop()
-    cleanup_databases()
+        # Mock the db query to return some dummy tracks
+        def mock_query_list(player, slot, query_type, params, request_id):
+            return [
+                {'track_id': 1, 'mount_path': '/test/track1.wav'},
+                {'track_id': 2, 'mount_path': '/test/track2.wav'}
+            ]
+        prodj.data.dbc.query_list = mock_query_list
+
+        # Mock the NFS download to avoid real network calls
+        async def mock_handle_download(ip, slot, src_path, dst_path):
+            logging.info(f"[MOCK] 'Downloading' {src_path} to {dst_path}")
+            # Create a dummy file
+            os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+            with open(dst_path, 'w') as f:
+                f.write(f"mock content for {src_path}")
+            return dst_path
+        prodj.nfs.handle_download = mock_handle_download
+
+
+    if args.no_gui:
+        if not args.player or not args.slot:
+            parser.error("--player and --slot are required when using --no-gui")
+
+        logging.info(f"Running in CLI mode for player {args.player} and slot {args.slot}")
+
+        # This is a bit tricky since we need to run an async function from a sync context
+        # and wait for it. We can create a temporary asyncio loop for this.
+        async def cli_main():
+            if args.list:
+                logging.info("Listing available players...")
+                # Wait a few seconds for players to announce themselves
+                await asyncio.sleep(5)
+                players = prodj.cl.clients
+                if not players:
+                    print("No players found on the network.")
+                    return
+
+                print(f"{'Player #':<10} {'Model':<15} {'IP Address':<18} {'Media'}")
+                print(f"{'-'*8:<10} {'-'*13:<15} {'-'*16:<18} {'-'*5}")
+                for p in sorted(players, key=lambda x: x.player_number):
+                    media_info = []
+                    if p.usb_state == 'loaded':
+                        media_info.append(f"USB ({p.usb_info.get('track_count', 'N/A')} tracks)")
+                    if p.sd_state == 'loaded':
+                        media_info.append(f"SD ({p.sd_info.get('track_count', 'N/A')} tracks)")
+
+                    print(f"{p.player_number:<10} {p.model:<15} {p.ip_addr:<18} {', '.join(media_info) or 'None'}")
+                return
+
+            # Wait for the player to appear
+            if not args.player or not args.slot:
+                parser.error("--player and --slot are required for downloading.")
+
+            player = None
+            logging.info("Waiting for player to appear...")
+            while player is None:
+                player = prodj.cl.getClient(args.player)
+                if player and player.loaded_slot == args.slot:
+                    logging.info(f"Player {args.player} with slot {args.slot} found.")
+                    break
+                await asyncio.sleep(1)
+
+            # Define a simple progress bar for the console
+            def console_progress(downloaded, total):
+                if total > 0:
+                    percent = int(downloaded / total * 100)
+                    bar = '#' * (percent // 2) + ' ' * (50 - (percent // 2))
+                    sys.stdout.write(f"\r[{bar}] {percent}% ({downloaded}/{total})")
+                    sys.stdout.flush()
+
+            # Run the download session
+            await run_download_session(prodj, args.player, args.slot, console_progress, args.dry_run)
+            if not args.dry_run:
+                print("\nDownload complete.")
+
+        try:
+            # We need to run our async main in the prodj nfs loop
+            cli_future = asyncio.run_coroutine_threadsafe(cli_main(), prodj.nfs.loop)
+            cli_future.result() # Wait for the CLI main task to complete
+        except KeyboardInterrupt:
+            logging.info("CLI mode interrupted by user.")
+        except Exception as e:
+            logging.error(f"An error occurred in CLI mode: {e}")
+        finally:
+            logging.info("CLI mode finished. Shutting down...")
+            unmount_future = asyncio.run_coroutine_threadsafe(prodj.nfs.unmount_all(), prodj.nfs.loop)
+            unmount_future.result(timeout=10)
+            prodj.stop()
+            cleanup_databases()
+
+    else:
+        app = QApplication(sys.argv)
+        djthief = DjThief(prodj)
+
+        signal.signal(signal.SIGINT, lambda s, f: app.quit())
+
+        app.exec()
+        logging.info("Shutting down...")
+        # Unmount all NFS mounts before stopping prodj
+        unmount_future = asyncio.run_coroutine_threadsafe(prodj.nfs.unmount_all(), prodj.nfs.loop)
+        unmount_future.result(timeout=10) # Wait for unmount to complete
+        prodj.stop()
+        cleanup_databases()

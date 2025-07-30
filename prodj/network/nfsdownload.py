@@ -67,6 +67,7 @@ class NfsDownload:
     dirname = os.path.dirname(self.dst_path)
     if dirname:
       os.makedirs(dirname, exist_ok=True)
+    logging.debug(f"Opening file for writing: {self.dst_path}")
     self.download_file_handle = open(self.dst_path, "wb")
     self.type = NfsDownloadType.file
 
@@ -184,7 +185,8 @@ class NfsDownload:
         self.download_buffer += data_block
       elif self.type == NfsDownloadType.file:
         if self.download_file_handle and not self.download_file_handle.closed:
-            self.download_file_handle.write(data_block)
+            bytes_written = self.download_file_handle.write(data_block)
+            logging.debug(f"Wrote {bytes_written} bytes to {self.dst_path}")
         else:
             logging.error("Attempted to write to a closed or non-existent file handle.")
             self.fail_download("File handle error during write.")
@@ -222,6 +224,7 @@ class NfsDownload:
             self.future.set_result(self.download_buffer)
         elif self.type == NfsDownloadType.file:
             if self.download_file_handle and not self.download_file_handle.closed:
+                logging.debug(f"Closing file: {self.dst_path}")
                 self.download_file_handle.close()
             self.future.set_result(self.dst_path)
     else:
