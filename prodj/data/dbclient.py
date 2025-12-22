@@ -273,7 +273,7 @@ class DBClient:
     if request_type == "root_menu_request":
       query["args"].append({"type": "int32", "value": 0})
       query["args"].append({"type": "int32", "value": 0xffffff})
-    elif request_type in ["metadata_request", "track_data_request", "track_info_request"]:
+    elif request_type in ["metadata_request", "track_data_request", "track_info_request", "mount_info_request"]:
       query["args"].append({"type": "int32", "value": id_list[0]})
     elif request_type == "playlist_request":
       query["args"].append({"type": "int32", "value": sort_id})

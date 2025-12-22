@@ -70,16 +70,23 @@ class RpcReceiver:
     result_future, _ = self.requests.pop(rpcreply.xid)
 
     if rpcreply.content.reply_stat != "accepted":
-      result_future.set_exception(RuntimeError("RPC call denied: "+rpcreply.content.reject_stat))
+      if not result_future.done():
+        result_future.set_exception(RuntimeError("RPC call denied: "+rpcreply.content.reject_stat))
+      return
     if rpcreply.content.content.accept_stat != "success":
-      result_future.set_exception(RuntimeError("RPC call unsuccessful: "+rpcreply.content.content.accept_stat))
+      if not result_future.done():
+        result_future.set_exception(RuntimeError("RPC call unsuccessful: "+rpcreply.content.content.accept_stat))
+      return
 
-    result_future.set_result(rpcreply.content.content.content)
+    if not result_future.done():
+      result_future.set_result(rpcreply.content.content.content)
 
   def checkTimeouts(self):
       deadline = time.time() - self.request_timeout
       for id, (future, started_at) in list(self.requests.items()):
         if started_at < deadline:
-          logging.warning("Removing XID %d which has timed out", id)
-          future.set_exception(ReceiveTimeout(f"Request timed out after {self.request_timeout} seconds"))
-          del self.requests[id]
+          if not future.done():
+            logging.warning("Removing XID %d which has timed out", id)
+            future.set_exception(ReceiveTimeout(f"Request timed out after {self.request_timeout} seconds"))
+          if id in self.requests:
+             del self.requests[id]

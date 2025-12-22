@@ -4,7 +4,7 @@ import logging
 import sys
 import os
 from PyQt5.QtWidgets import QApplication, QWidget, QGridLayout, QPushButton, QLabel, QVBoxLayout, QFrame, QProgressBar
-from PyQt5.QtCore import pyqtSignal, Qt, QObject
+from PyQt5.QtCore import pyqtSignal, Qt, QObject, QTimer
 import signal
 from prodj.core.prodj import ProDj
 from prodj.data.dbclient import DBClient
@@ -57,6 +57,8 @@ class DjThief(QWidget):
                 self.media_sources[key].deleteLater()
                 del self.media_sources[key]
 
+from collections import deque
+
 class DownloadManager(QObject):
     progress_signal = pyqtSignal(int)
     finished_signal = pyqtSignal()
@@ -69,6 +71,8 @@ class DownloadManager(QObject):
         self.slot = slot
         self.tracks_to_download = 0
         self.tracks_downloaded = 0
+        self.download_queue = deque()
+        self.is_downloading = False
 
     def download_all_songs(self):
         logging.info(f"Downloading all songs from player {self.player_number}:{self.slot}")
@@ -90,36 +94,93 @@ class DownloadManager(QObject):
             self.tracks_downloaded = 0
             self.parent.progress_bar.setMaximum(self.tracks_to_download)
 
-            # Then, get the track list in chunks
+            # Then, get the track list in chunks and fill the queue
             chunk_size = 100
             for i in range(0, track_count, chunk_size):
                 tracks = self.prodj.data.dbc.query_list(self.player_number, self.slot, "title", [i, chunk_size], "title_request")
                 if tracks:
                     for track in tracks:
-                        future = self.prodj.data.get_mount_info(
-                            self.player_number,
-                            self.slot,
-                            track['track_id'],
-                            self.prodj.nfs.enqueue_download_from_mount_info
-                        )
-                        future.add_done_callback(self.download_done_callback)
+                        self.download_queue.append(track['track_id'])
                 else:
                     break
+            
+            logging.info(f"Queued {len(self.download_queue)} tracks for download")
+            self.process_queue()
+                
         except Exception as e:
             logging.error(f"Failed to get track list: {e}")
             self.finished_signal.emit()
             return
 
+    def process_queue(self):
+        if not self.download_queue:
+            logging.info("Download queue empty, finished.")
+            self.finished_signal.emit()
+            return
+
+        if self.is_downloading:
+            return
+
+        track_id = self.download_queue.popleft()
+        self.is_downloading = True
+        
+        logging.debug(f"Processing track ID {track_id}, {len(self.download_queue)} remaining")
+
+        try:
+            # Pass our own callback to handle the mount info response
+            # We don't use the future returned by get_mount_info because it resolves 
+            # as soon as mount info is received, NOT when download is done.
+            self.prodj.data.get_mount_info(
+                self.player_number,
+                self.slot,
+                track_id,
+                self.handle_mount_info_response
+            )
+        except Exception as e:
+            logging.error(f"Failed to initiate download for track {track_id}: {e}")
+            self.is_downloading = False
+            self.process_queue() # Try next one
+
+    def handle_mount_info_response(self, request, player_number, slot, track_id, mount_info):
+        # This callback is invoked by DataProvider when mount info is available.
+        # We manually trigger the NFS download here so we can capture the download future.
+        try:
+            if mount_info is None:
+                logging.warning(f"Mount info request returned None for track {track_id}")
+                self.is_downloading = False
+                self.process_queue()
+                return
+
+            download_future = self.prodj.nfs.enqueue_download_from_mount_info(
+                request, player_number, slot, track_id, mount_info
+            )
+            
+            if download_future:
+                download_future.add_done_callback(self.download_done_callback)
+            else:
+                logging.error("Failed to enqueue download (invalid mount info?)")
+                self.is_downloading = False
+                self.process_queue()
+        except Exception as e:
+            logging.error(f"Error handling mount info response: {e}")
+            self.is_downloading = False
+            self.process_queue()
+
     def download_done_callback(self, future):
-        if future.exception() is not None:
-            logging.error("download failed (callback): %s", future.exception())
-        else:
-            logging.info("download finished: %s", future.result())
+        self.is_downloading = False
+        try:
+            if future.exception() is not None:
+                logging.error("download failed (callback): %s", future.exception())
+            else:
+                logging.info("download finished: %s", future.result())
+        except Exception as e:
+             logging.error(f"Error in download callback: {e}")
 
         self.tracks_downloaded += 1
         self.progress_signal.emit(self.tracks_downloaded)
-        if self.tracks_downloaded == self.tracks_to_download:
-            self.finished_signal.emit()
+        
+        # Process next item in queue
+        self.process_queue()
 
 class MediaSourceWidget(QFrame):
     def __init__(self, parent, ip_addr, slot, player_number):
@@ -138,27 +199,45 @@ class MediaSourceWidget(QFrame):
         self.setFrameStyle(QFrame.Box | QFrame.Plain)
         layout = QVBoxLayout(self)
         self.label = QLabel(f"Media Source: Player {self.player_number} - {self.slot.upper()}")
+        
+        # Add refresh DB button for debugging
+        self.refresh_db_button = QPushButton("Check Database Status")
+        self.refresh_db_button.clicked.connect(self.check_db_status)
+        
         self.download_button = QPushButton("Download All Songs")
         self.download_button.clicked.connect(self.start_download)
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setVisible(False)
+        
         layout.addWidget(self.label)
+        layout.addWidget(self.refresh_db_button)
         layout.addWidget(self.download_button)
         layout.addWidget(self.progress_bar)
+        
+        # Check DB status once, but don't block
+        self.check_db_status()
 
     def check_db_status(self):
-        # Disable download button until PDB is loaded
-        self.download_button.setEnabled(False)
-        # The get_db function in PDBProvider is synchronous, so we can just call it and check the result
-        if not os.path.exists(f"databases/player-{self.player_number}-{self.slot}.pdb"):
+        pdb_path = f"databases/player-{self.player_number}-{self.slot}.pdb"
+        logging.info(f"Checking for PDB at {pdb_path}")
+        
+        if not os.path.exists(pdb_path):
+            logging.warning(f"PDB file not found at {pdb_path}")
+            # Try to force a download via get_db if possible
             try:
+                # This triggers a download if missing
                 db = self.parent.prodj.data.pdb.get_db(self.player_number, self.slot)
                 if db:
-                    self.download_button.setEnabled(True)
+                    logging.info("PDB loaded successfully via get_db")
+                else:
+                    logging.warning("get_db returned None")
             except Exception as e:
                 logging.error(f"Failed to get PDB database: {e}")
         else:
-            self.download_button.setEnabled(True)
+            logging.info(f"PDB file exists at {pdb_path}")
+        
+        # Always enable download button, allow user to try
+        self.download_button.setEnabled(True)
 
     def start_download(self):
         self.download_button.setEnabled(False)

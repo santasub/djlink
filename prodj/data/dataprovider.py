@@ -41,6 +41,7 @@ class DataProvider(Thread):
 
   def stop(self):
     self.keep_running = False
+    self.join()
     self.pdb.stop()
     for i in range(1,5):
         self.dbc.closeSocket(i)
@@ -51,7 +52,6 @@ class DataProvider(Thread):
     self.color_waveform_store.stop()
     self.color_preview_waveform_store.stop()
     self.beatgrid_store.stop()
-    self.join()
 
   def cleanup_stores_from_changed_media(self, player_number, slot):
     self.metadata_store.removeByPlayerSlot(player_number, slot)
@@ -235,5 +235,14 @@ class DataProvider(Thread):
         self._retry_request(request)
       except FatalQueryError as e:
         logging.error("%s request failed: %s", request[0], e)
+        # request tuple: (request_name, store, params, callback, retry_count)
+        callback = request[3]
+        if callback is not None:
+             try:
+                 # Call callback with None as reply to indicate failure
+                 params = request[2]
+                 callback(request[0], *params, None)
+             except Exception as cb_e:
+                 logging.error("Error invoking callback on failure: %s", cb_e)
         self.queue.task_done()
     logging.debug("DataProvider shutting down")

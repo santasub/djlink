@@ -12,7 +12,7 @@ class Vcdj(Thread):
     self.prodj = prodj
     self.player_number = 5
     self.model = "Virtual CDJ"
-    self.packet_interval = 1.5
+    self.packet_interval = 0.75
     self.event = Event()
     self.ip_addr = ""
     self.mac_addr = ""
