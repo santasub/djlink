@@ -26,13 +26,11 @@ class SignalBridge(QObject):
     client_change_signal = pyqtSignal(int)
     master_change_signal = pyqtSignal(int) # Player number of the new master, or 0 if no master
     beat_signal = pyqtSignal()  # Signal for MIDI beat events
-    audio_click_signal = pyqtSignal()  # Signal for debug audio clicks
     # Add more signals as needed
 
 class MidiClockApp:
-    def __init__(self, args, debug_audio=False):
+    def __init__(self, args):
         self.args = args
-        self.debug_audio = debug_audio
 
         numeric_level = getattr(logging, args.loglevel.upper(), None)
         if not isinstance(numeric_level, int):
@@ -191,10 +189,7 @@ class MidiClockApp:
         # We might need a more specific callback for master changes, or derive it in client_change.
         # For now, client_change can trigger UI updates which can check master status.
 
-        if self.debug_audio:
-            logging.info("Debug audio mode enabled - beat clicks will be audible")
-        
-        self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge, debug_audio=self.debug_audio)
+        self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge)
         self.main_window.show()
 
         # Connect signals from bridge to main window slots

@@ -161,11 +161,10 @@ class PlayerTileWidget(QFrame):
 
 
 class MidiClockMainWindow(QWidget):
-    def __init__(self, prodj_instance, signal_bridge, debug_audio=False, parent=None):
+    def __init__(self, prodj_instance, signal_bridge, parent=None):
         super().__init__(parent)
         self.prodj = prodj_instance
         self.signal_bridge = signal_bridge
-        self.debug_audio = debug_audio
         self.player_tiles = {} # player_number: PlayerTileWidget
         self.selected_player_source = None # Player number of the selected source
         self.coasting_bpm = None # Stores the BPM value when coasting
@@ -206,16 +205,6 @@ class MidiClockMainWindow(QWidget):
             border: 2px solid #4a4a4a;
             border-radius: 12px;
         """))
-        
-        # Play audio click in debug mode
-        if self.debug_audio:
-            self.signal_bridge.audio_click_signal.emit()
-    
-    def _on_audio_click(self):
-        # Play a short beep sound
-        import os
-        # Use system beep (works on macOS, Linux, Windows)
-        print('\a', end='', flush=True)  # Terminal bell
 
     def adjust_pitch(self, direction):
         amount = self.pitch_amount_spinbox.value()
@@ -355,8 +344,6 @@ class MidiClockMainWindow(QWidget):
     def _connect_signals(self):
         self.signal_bridge.client_change_signal.connect(self.handle_client_or_master_change)
         self.signal_bridge.beat_signal.connect(self._on_beat_signal)
-        if self.debug_audio:
-            self.signal_bridge.audio_click_signal.connect(self._on_audio_click)
         # self.signal_bridge.master_change_signal.connect(self.handle_client_or_master_change) # Can simplify if client_change covers master status
 
     def handle_client_or_master_change(self, player_number_changed=None):
