@@ -25,11 +25,14 @@ class SignalBridge(QObject):
     """
     client_change_signal = pyqtSignal(int)
     master_change_signal = pyqtSignal(int) # Player number of the new master, or 0 if no master
+    beat_signal = pyqtSignal()  # Signal for MIDI beat events
+    audio_click_signal = pyqtSignal()  # Signal for debug audio clicks
     # Add more signals as needed
 
 class MidiClockApp:
-    def __init__(self, args):
+    def __init__(self, args, debug_audio=False):
         self.args = args
+        self.debug_audio = debug_audio
 
         numeric_level = getattr(logging, args.loglevel.upper(), None)
         if not isinstance(numeric_level, int):
@@ -41,90 +44,142 @@ class MidiClockApp:
         self.app = QApplication(sys.argv)
         self.app.setStyleSheet("""
             QWidget {
-                background-color: #2e2e2e;
-                color: #d0d0d0;
-                font-family: "Arial", sans-serif; /* Adjust font as needed */
-                font-size: 10pt; /* Default font size */
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a1a1a, stop:1 #2a2a2a);
+                color: #e5e7eb;
+                font-family: "Segoe UI", "San Francisco", "Helvetica Neue", Arial, sans-serif;
+                font-size: 11pt;
             }
             QPushButton {
-                background-color: #4a4a4a;
-                border: 1px solid #5a5a5a;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3b3b3b, stop:1 #2d2d2d);
+                border: 1px solid #4a4a4a;
                 padding: 6px;
-                min-height: 20px;
-                border-radius: 3px;
+                min-height: 35px;
+                border-radius: 6px;
+                color: #e5e7eb;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #5a5a5a;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #4a4a4a, stop:1 #3a3a3a);
+                border: 1px solid #0ea5e9;
             }
             QPushButton:pressed, QPushButton:checked {
-                background-color: #0078d7;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0ea5e9, stop:1 #0284c7);
                 color: white;
-                border: 1px solid #005394;
+                border: 1px solid #0284c7;
             }
             QPushButton:disabled {
-                background-color: #383838;
-                color: #707070;
+                background: #2a2a2a;
+                color: #6b7280;
+                border: 1px solid #374151;
             }
             QLabel {
                 background-color: transparent;
-                padding: 2px; /* Add some padding to labels */
+                padding: 2px;
+                color: #e5e7eb;
             }
             QComboBox {
-                background-color: #3c3c3c;
-                border: 1px solid #5a5a5a;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3b3b3b, stop:1 #2d2d2d);
+                border: 1px solid #4a4a4a;
                 padding: 4px;
-                min-height: 22px;
-                border-radius: 3px;
+                min-height: 30px;
+                border-radius: 6px;
+                color: #e5e7eb;
+            }
+            QComboBox:hover {
+                border: 1px solid #0ea5e9;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 30px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #e5e7eb;
+                margin-right: 10px;
             }
             QComboBox QAbstractItemView {
-                background-color: #3c3c3c;
-                border: 1px solid #5a5a5a;
-                selection-background-color: #0078d7;
-                color: #d0d0d0;
+                background-color: #2d2d2d;
+                border: 1px solid #0ea5e9;
+                selection-background-color: #0ea5e9;
+                color: #e5e7eb;
+                outline: none;
             }
             QSlider::groove:horizontal {
-                border: 1px solid #5a5a5a;
-                height: 8px;
-                background: #3c3c3c;
+                border: 1px solid #4a4a4a;
+                height: 12px;
+                background: #2d2d2d;
                 margin: 2px 0;
-                border-radius: 4px;
+                border-radius: 6px;
             }
             QSlider::handle:horizontal {
-                background: #0078d7;
-                border: 1px solid #005394;
-                width: 16px;
-                margin: -4px 0;
-                border-radius: 8px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #0ea5e9, stop:1 #0284c7);
+                border: 2px solid #0369a1;
+                width: 24px;
+                margin: -6px 0;
+                border-radius: 12px;
             }
-            QFrame#PlayerFrame { /* Example for PlayerTileWidget if it uses this ID */
-                border: 1px solid #505050;
-                border-radius: 4px;
+            QSlider::handle:horizontal:hover {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #38bdf8, stop:1 #0ea5e9);
+            }
+            QFrame#PlayerFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2d2d2d, stop:1 #252525);
+                border: 2px solid #3b3b3b;
+                border-radius: 12px;
+                padding: 8px;
             }
             QGroupBox {
-                font-weight: bold;
-                border: 1px solid #444444;
-                margin-top: 10px; /* Space for title */
-                padding-top: 10px; /* Space inside for content */
-                border-radius: 4px;
+                font-weight: 600;
+                border: 2px solid #3b3b3b;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2d2d2d, stop:1 #252525);
+                margin-top: 6px;
+                padding-top: 6px;
+                border-radius: 6px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                padding: 0 5px 0 5px;
-                left: 10px;
-                color: #b0b0b0; /* Lighter title for groupbox */
+                padding: 0 4px 0 4px;
+                left: 8px;
+                color: #0ea5e9;
+                font-size: 10pt;
             }
             QRadioButton {
                 spacing: 5px;
                 padding: 2px;
+                color: #e5e7eb;
+            }
+            QRadioButton::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QDoubleSpinBox {
+                background: #2d2d2d;
+                border: 1px solid #4a4a4a;
+                border-radius: 6px;
+                padding: 6px;
+                color: #e5e7eb;
+            }
+            QDoubleSpinBox:hover {
+                border: 1px solid #0ea5e9;
             }
             QMenu {
-                background-color: #3c3c3c;
-                border: 1px solid #5a5a5a;
-                color: #d0d0d0;
+                background-color: #2d2d2d;
+                border: 1px solid #0ea5e9;
+                color: #e5e7eb;
             }
             QMenu::item:selected {
-                background-color: #0078d7;
+                background-color: #0ea5e9;
                 color: white;
             }
         """)
@@ -136,8 +191,10 @@ class MidiClockApp:
         # We might need a more specific callback for master changes, or derive it in client_change.
         # For now, client_change can trigger UI updates which can check master status.
 
-        # Moved import to top of file
-        self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge)
+        if self.debug_audio:
+            logging.info("Debug audio mode enabled - beat clicks will be audible")
+        
+        self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge, debug_audio=self.debug_audio)
         self.main_window.show()
 
         # Connect signals from bridge to main window slots

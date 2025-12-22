@@ -34,7 +34,8 @@ class PlayerTileWidget(QFrame):
         self.is_selected_source = False
         self.is_dropped = False # New state
 
-        self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
+        self.setFrameStyle(QFrame.NoFrame)
+        self.setObjectName("PlayerFrame")
         self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
 
         layout = QVBoxLayout(self)
@@ -43,15 +44,27 @@ class PlayerTileWidget(QFrame):
         self.player_label.setAlignment(Qt.AlignCenter)
         font = self.player_label.font()
         font.setBold(True)
-        font.setPointSize(font.pointSize() + 2)
+        font.setPointSize(font.pointSize() + 2)  # Reduced for small screen
         self.player_label.setFont(font)
         layout.addWidget(self.player_label)
 
         self.bpm_label = QLabel("BPM: --.--")
+        bpm_font = self.bpm_label.font()
+        bpm_font.setPointSize(bpm_font.pointSize() + 2)
+        bpm_font.setBold(True)
+        self.bpm_label.setFont(bpm_font)
+        self.bpm_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.bpm_label)
+        
         self.delay_label = QLabel("Delay: --.-- ms")
+        self.delay_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.delay_label)
+        
         self.status_label = QLabel("Status: Normal")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        status_font = self.status_label.font()
+        status_font.setPointSize(status_font.pointSize() - 2)
+        self.status_label.setFont(status_font)
         layout.addWidget(self.status_label)
 
         self.action_button = QPushButton("Select as Source")
@@ -94,25 +107,44 @@ class PlayerTileWidget(QFrame):
 
         if self.is_dropped:
             status_parts.append("Network Drop")
-            button_text = "Use as Source (Reconnect)" # Or just "Select", re-selection implies reconnect
-            current_style = "PlayerTileWidget { border: 1px solid red; background-color: #400000; }"
-            # Keep button enabled to allow re-selection if it comes back.
-            # Or disable it: button_enabled = False
-            self.bpm_label.setText("BPM: --.--") # Clear stale data
+            button_text = "Use as Source (Reconnect)"
+            current_style = """
+                PlayerTileWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #3a1a1a, stop:1 #2a1515);
+                    border: 3px solid #ef4444;
+                    border-radius: 12px;
+                    padding: 12px;
+                }
+            """
+            self.bpm_label.setText("BPM: --.--")
             self.delay_label.setText("Delay: --.-- ms")
 
         else: # Not dropped
             if self.is_master:
                 status_parts.append("Master")
-                current_style = "PlayerTileWidget { border: 2px solid blue; }"
+                current_style = """
+                    PlayerTileWidget {
+                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                            stop:0 #1a2a3a, stop:1 #152530);
+                        border: 3px solid #0ea5e9;
+                        border-radius: 12px;
+                        padding: 12px;
+                    }
+                """
 
             if self.is_selected_source:
                 status_parts.append("Selected Source")
-                current_style = "PlayerTileWidget { border: 2px solid green; }"
-                button_text = "Deselect Source" # Change button text when selected
-                # self.action_button.setChecked(True) # If it were checkable
-            # else:
-                # self.action_button.setChecked(False) # If it were checkable
+                current_style = """
+                    PlayerTileWidget {
+                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                            stop:0 #1a3a2a, stop:1 #153025);
+                        border: 3px solid #10b981;
+                        border-radius: 12px;
+                        padding: 12px;
+                    }
+                """
+                button_text = "Deselect Source"
 
         if not status_parts and not self.is_dropped:
             self.status_label.setText("Status: Normal")
@@ -129,10 +161,11 @@ class PlayerTileWidget(QFrame):
 
 
 class MidiClockMainWindow(QWidget):
-    def __init__(self, prodj_instance, signal_bridge, parent=None):
+    def __init__(self, prodj_instance, signal_bridge, debug_audio=False, parent=None):
         super().__init__(parent)
         self.prodj = prodj_instance
         self.signal_bridge = signal_bridge
+        self.debug_audio = debug_audio
         self.player_tiles = {} # player_number: PlayerTileWidget
         self.selected_player_source = None # Player number of the selected source
         self.coasting_bpm = None # Stores the BPM value when coasting
@@ -156,13 +189,43 @@ class MidiClockMainWindow(QWidget):
         self.update_global_status_label() # Initial status
 
     def beat_received(self):
-        self.midi_led.setStyleSheet("background-color: #00FF00; border-radius: 10px;")
-        QTimer.singleShot(50, lambda: self.midi_led.setStyleSheet("background-color: #505050; border-radius: 10px;"))
+        # This is called from MIDI clock thread, so we need to use a signal
+        # to communicate with the GUI thread
+        self.signal_bridge.beat_signal.emit()
+    
+    def _on_beat_signal(self):
+        # This runs in the GUI thread
+        self.midi_led.setStyleSheet("""
+            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
+                fx:0.5, fy:0.5, stop:0 #10b981, stop:1 #059669);
+            border: 2px solid #10b981;
+            border-radius: 12px;
+        """)
+        QTimer.singleShot(80, lambda: self.midi_led.setStyleSheet("""
+            background: #2d2d2d;
+            border: 2px solid #4a4a4a;
+            border-radius: 12px;
+        """))
+        
+        # Play audio click in debug mode
+        if self.debug_audio:
+            self.signal_bridge.audio_click_signal.emit()
+    
+    def _on_audio_click(self):
+        # Play a short beep sound
+        import os
+        # Use system beep (works on macOS, Linux, Windows)
+        print('\a', end='', flush=True)  # Terminal bell
 
     def adjust_pitch(self, direction):
         amount = self.pitch_amount_spinbox.value()
         self.pitch_offset += amount * direction
-        self.pitch_label.setText(f"Pitch: {self.pitch_offset:.1f} ms")
+        self.pitch_label.setText(f"Offset: {self.pitch_offset:+.1f} ms")
+        self.update_midi_clock_source_logic()
+    
+    def reset_pitch_offset(self):
+        self.pitch_offset = 0.0
+        self.pitch_label.setText("Offset: 0.0 ms")
         self.update_midi_clock_source_logic()
 
     def _init_ui(self):
@@ -176,94 +239,124 @@ class MidiClockMainWindow(QWidget):
         # --- Global Controls Area ---
         controls_frame = QFrame()
         controls_frame.setFrameStyle(QFrame.StyledPanel)
-        controls_layout = QHBoxLayout(controls_frame)
+        controls_layout = QVBoxLayout(controls_frame)
 
+        # Row 1: MIDI Port and Start/Stop
+        row1 = QHBoxLayout()
+        
         self.midi_led = QFrame()
-        self.midi_led.setFrameStyle(QFrame.StyledPanel)
-        self.midi_led.setFixedSize(20, 20)
-        self.midi_led.setStyleSheet("background-color: #505050; border-radius: 10px;")
-        controls_layout.addWidget(self.midi_led)
+        self.midi_led.setFrameStyle(QFrame.NoFrame)
+        self.midi_led.setFixedSize(24, 24)
+        self.midi_led.setStyleSheet("""
+            background: #2d2d2d;
+            border: 2px solid #4a4a4a;
+            border-radius: 12px;
+        """)
+        row1.addWidget(self.midi_led)
 
+        row1.addWidget(QLabel("Port:"))
         self.midi_port_combo = QComboBox()
-        # self.populate_midi_ports() # To be implemented
-        controls_layout.addWidget(QLabel("MIDI Output Port:"))
-        controls_layout.addWidget(self.midi_port_combo)
+        row1.addWidget(self.midi_port_combo)
 
-        self.start_stop_button = QPushButton("Start MIDI Clock")
+        self.start_stop_button = QPushButton("Start")
         self.start_stop_button.setCheckable(True)
         self.start_stop_button.clicked.connect(self.toggle_midi_clock_output)
-        controls_layout.addWidget(self.start_stop_button)
-        controls_layout.addSpacing(20)
-
-        # --- Manual BPM Controls ---
-        self.manual_mode_button = QPushButton("Enable Manual BPM")
-        self.manual_mode_button.setCheckable(True)
-        self.manual_mode_button.clicked.connect(self.toggle_manual_bpm_mode)
-        controls_layout.addWidget(self.manual_mode_button)
-
-        self.manual_bpm_slider = QSlider(Qt.Horizontal)
-        self.manual_bpm_slider.setRange(300, 3000) # e.g., 30.0 BPM to 300.0 BPM, scaled by 10
-        self.manual_bpm_slider.setValue(1200) # Default 120.0 BPM
-        self.manual_bpm_slider.setFixedWidth(150)
-        self.manual_bpm_slider.valueChanged.connect(self.manual_bpm_slider_changed)
-        self.manual_bpm_slider.setEnabled(False) # Disabled initially
-        controls_layout.addWidget(self.manual_bpm_slider)
-
-        self.manual_bpm_label = QLabel("120.0 BPM")
-        self.manual_bpm_label.setFixedWidth(70)
-        self.manual_bpm_label.setEnabled(False) # Disabled initially
-        controls_layout.addWidget(self.manual_bpm_label)
-        controls_layout.addSpacing(10)
-
-        self.tap_tempo_button = QPushButton("Tap Tempo")
-        self.tap_tempo_button.clicked.connect(self.handle_tap_tempo_clicked)
-        self.tap_tempo_button.setEnabled(False) # Enable when manual mode is active
-        controls_layout.addWidget(self.tap_tempo_button)
-        controls_layout.addSpacing(20)
-
+        row1.addWidget(self.start_stop_button)
+        
         self.settings_button = QPushButton("Settings")
         self.settings_button.clicked.connect(self.open_settings_dialog)
-        controls_layout.addWidget(self.settings_button)
-        # --- End Manual BPM Controls ---
+        row1.addWidget(self.settings_button)
+        row1.addStretch()
+        
+        controls_layout.addLayout(row1)
 
-        # --- Pitch Controls ---
-        pitch_group = QGroupBox("Pitch Adjustment")
+        # Row 2: Manual BPM Controls
+        row2 = QHBoxLayout()
+        
+        self.manual_mode_button = QPushButton("Manual BPM")
+        self.manual_mode_button.setCheckable(True)
+        self.manual_mode_button.clicked.connect(self.toggle_manual_bpm_mode)
+        row2.addWidget(self.manual_mode_button)
+
+        self.manual_bpm_slider = QSlider(Qt.Horizontal)
+        self.manual_bpm_slider.setRange(300, 3000)
+        self.manual_bpm_slider.setValue(1200)
+        self.manual_bpm_slider.setFixedWidth(120)
+        self.manual_bpm_slider.valueChanged.connect(self.manual_bpm_slider_changed)
+        self.manual_bpm_slider.setEnabled(False)
+        row2.addWidget(self.manual_bpm_slider)
+
+        self.manual_bpm_label = QLabel("120.0")
+        self.manual_bpm_label.setFixedWidth(50)
+        self.manual_bpm_label.setEnabled(False)
+        row2.addWidget(self.manual_bpm_label)
+
+        self.tap_tempo_button = QPushButton("Tap")
+        self.tap_tempo_button.clicked.connect(self.handle_tap_tempo_clicked)
+        self.tap_tempo_button.setEnabled(False)
+        row2.addWidget(self.tap_tempo_button)
+        
+        row2.addSpacing(10)
+        
+        # Timing adjustment in same row
+        pitch_group = QGroupBox("Timing")
         pitch_layout = QHBoxLayout()
-
-        self.pitch_down_button = QPushButton("-")
-        self.pitch_down_button.setFixedWidth(40)
-        self.pitch_down_button.clicked.connect(lambda: self.adjust_pitch(-1))
-        pitch_layout.addWidget(self.pitch_down_button)
-
+        
+        self.pitch_label = QLabel("0.0ms")
+        pitch_label_font = self.pitch_label.font()
+        pitch_label_font.setBold(True)
+        self.pitch_label.setFont(pitch_label_font)
+        self.pitch_label.setStyleSheet("color: #0ea5e9;")
+        self.pitch_label.setFixedWidth(50)
+        pitch_layout.addWidget(self.pitch_label)
+        
+        pitch_layout.addWidget(QLabel("Step:"))
         self.pitch_amount_spinbox = QDoubleSpinBox()
         self.pitch_amount_spinbox.setRange(0.1, 10.0)
         self.pitch_amount_spinbox.setSingleStep(0.1)
-        self.pitch_amount_spinbox.setSuffix(" ms")
+        self.pitch_amount_spinbox.setSuffix("ms")
         self.pitch_amount_spinbox.setValue(1.0)
+        self.pitch_amount_spinbox.setFixedWidth(65)
         pitch_layout.addWidget(self.pitch_amount_spinbox)
-
+        
+        self.pitch_down_button = QPushButton("−")
+        self.pitch_down_button.setFixedWidth(35)
+        self.pitch_down_button.clicked.connect(lambda: self.adjust_pitch(-1))
+        pitch_layout.addWidget(self.pitch_down_button)
+        
         self.pitch_up_button = QPushButton("+")
-        self.pitch_up_button.setFixedWidth(40)
+        self.pitch_up_button.setFixedWidth(35)
         self.pitch_up_button.clicked.connect(lambda: self.adjust_pitch(1))
         pitch_layout.addWidget(self.pitch_up_button)
-
-        self.pitch_label = QLabel("Pitch: 0.0 ms")
-        pitch_layout.addWidget(self.pitch_label)
-
+        
+        reset_button = QPushButton("Reset")
+        reset_button.setFixedWidth(50)
+        reset_button.clicked.connect(lambda: self.reset_pitch_offset())
+        pitch_layout.addWidget(reset_button)
+        
         pitch_group.setLayout(pitch_layout)
-        controls_layout.addWidget(pitch_group)
-        # --- End Pitch Controls ---
+        row2.addWidget(pitch_group)
+        row2.addStretch()
+        
+        controls_layout.addLayout(row2)
 
-        self.global_status_label = QLabel("MIDI Clock: Stopped | Source: None")
+
+
+        # Row 3: Status
+        self.global_status_label = QLabel("MIDI Clock: Stopped")
+        self.global_status_label.setWordWrap(True)
         controls_layout.addWidget(self.global_status_label)
         controls_layout.addStretch()
 
         main_layout.addWidget(controls_frame)
-        self.setMinimumSize(600, 300)
+        self.setMinimumSize(720, 480)  # Optimized for 720x1280 small touchscreen
 
 
     def _connect_signals(self):
         self.signal_bridge.client_change_signal.connect(self.handle_client_or_master_change)
+        self.signal_bridge.beat_signal.connect(self._on_beat_signal)
+        if self.debug_audio:
+            self.signal_bridge.audio_click_signal.connect(self._on_audio_click)
         # self.signal_bridge.master_change_signal.connect(self.handle_client_or_master_change) # Can simplify if client_change covers master status
 
     def handle_client_or_master_change(self, player_number_changed=None):
@@ -496,6 +589,7 @@ class MidiClockMainWindow(QWidget):
             try:
                 logging.debug(f"Attempting to open MIDI port: Name='{device_name_to_open}', PortNum/ID='{port_to_open}' using {self.MidiClockImpl.__name__}")
                 self.midi_clock_instance.open(preferred_name=device_name_to_open, preferred_port=port_to_open)
+                self.midi_clock_instance.set_beat_callback(self.beat_received)
                 self.update_midi_clock_source_logic() # Set initial BPM
                 if not self.midi_clock_instance.is_alive(): # Check if thread started (it should by .start())
                     self.midi_clock_instance.start()

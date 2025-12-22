@@ -83,7 +83,7 @@ class MidiClock(Thread):
     for i in range(self.enqueue_at_once):
       send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
       alsaseq.output(send)
-      if self.beat_callback and i % 6 == 0: # Blink every 1/4 note
+      if self.beat_callback and i % 24 == 0: # Blink every quarter note (beat)
           self.beat_callback()
       self.advance_time()
 

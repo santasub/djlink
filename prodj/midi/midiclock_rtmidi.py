@@ -44,7 +44,7 @@ class MidiClock(Thread):
     while self.keep_running:
       for n in range(self.calibration_cycles):
         self.midiout.send_message([0xF8])
-        if self.beat_callback and beat_count % 6 == 0: # Blink every 1/4 note
+        if self.beat_callback and beat_count % 24 == 0: # Blink every quarter note (beat)
             self.beat_callback()
         beat_count += 1
         sleep_duration = self.delay - cal
