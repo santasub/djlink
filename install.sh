@@ -15,6 +15,8 @@ echo "----------------------------------------------------"
 # 1. Update and install system dependencies
 echo "[1/5] Installing system dependencies (requires sudo)..."
 sudo apt-get update
+# We try to install multiple backends, as availability varies by OS version
+# python3-pyqt5 is very common on older Pi OS, python3-pyside6 is on newer ones.
 sudo apt-get install -y \
     python3-venv \
     python3-pip \
@@ -26,7 +28,10 @@ sudo apt-get install -y \
     libxkbcommon-x11-0 \
     libdbus-1-3 \
     libqt5gui5 \
-    python3-pyside6  # Recommended backend for Raspberry Pi
+    python3-pyqt5 || echo "Warning: python3-pyqt5 not found, skipping..."
+
+# Try to install PySide6 as well if available
+sudo apt-get install -y python3-pyside6 || echo "Warning: python3-pyside6 not found, skipping..."
 
 # 2. Clone repository
 if [ -d "$INSTALL_DIR" ]; then
