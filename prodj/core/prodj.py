@@ -36,16 +36,35 @@ class ProDj(Thread):
 
   def start(self):
     self.keepalive_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    self.keepalive_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+      self.keepalive_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     self.keepalive_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     self.keepalive_sock.bind((self.keepalive_ip, self.keepalive_port))
     logging.info("Listening on {}:{} for keepalive packets".format(self.keepalive_ip, self.keepalive_port))
+
     self.beat_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    self.beat_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+      self.beat_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     self.beat_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     self.beat_sock.bind((self.beat_ip, self.beat_port))
     logging.info("Listening on {}:{} for beat packets".format(self.beat_ip, self.beat_port))
+
     self.status_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    self.status_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_REUSEPORT"):
+      self.status_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
     self.status_sock.bind((self.status_ip, self.status_port))
     logging.info("Listening on {}:{} for status packets".format(self.status_ip, self.status_port))
+
+    if self.iface is not None:
+      self.own_ip = guess_own_iface([], self.iface)
+      if self.own_ip is not None:
+        logging.info("Guessed own interface {} ip {} mask {} mac {}".format(*self.own_ip))
+        if self.need_own_ip == OwnIpStatus.waiting:
+          self.vcdj_enable()
+        self.vcdj_set_iface()
     self.socks = [self.keepalive_sock, self.beat_sock, self.status_sock]
     self.keep_running = True
     self.data.start()
