@@ -52,12 +52,12 @@ source .venv/bin/activate
 # 4. Install Python dependencies
 echo "[4/5] Installing Python dependencies..."
 pip install --upgrade pip
-# Ensure we don't have a conflicting 'rtmidi' package
-pip uninstall -y rtmidi 2>/dev/null || true
+# Aggressively ensure we don't have a conflicting or broken 'rtmidi' package
+pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
 # We use requirements.txt which now excludes PyQt5 to avoid build failures on Pi
 pip install -r requirements.txt
-# Explicitly install python-rtmidi to be sure
-pip install python-rtmidi==1.5.8
+# Force install the correct package from scratch
+pip install --no-cache-dir python-rtmidi==1.5.8
 
 # 5. Create launch helper
 echo "[5/5] Creating locally executable launch script..."
