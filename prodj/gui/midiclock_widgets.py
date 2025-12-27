@@ -1,10 +1,10 @@
 import logging
 import sys # Moved to be among the first imports
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
                              QMessageBox, QDoubleSpinBox) # Added QDoubleSpinBox and QMessageBox
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
+from qtpy.QtCore import Qt, Signal, QTimer
 
 # MIDI Clock imports
 from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock
@@ -25,7 +25,7 @@ class PlayerTileWidget(QFrame):
     """
     A widget to display information for a single player and allow selection.
     """
-    selected_signal = pyqtSignal(int) # Emits player number when selected
+    selected_signal = Signal(int) # Emits player number when selected
 
     def __init__(self, player_number, parent=None):
         super().__init__(parent)

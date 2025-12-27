@@ -3,9 +3,9 @@
 import sys
 import logging
 from threading import Lock
-from PyQt5.QtCore import pyqtSignal, QSize, Qt
-from PyQt5.QtWidgets import QApplication, QHBoxLayout, QOpenGLWidget, QSlider, QWidget
-from PyQt5.QtGui import QSurfaceFormat
+from qtpy.QtCore import Signal, QSize, Qt
+from qtpy.QtWidgets import QApplication, QHBoxLayout, QOpenGLWidget, QSlider, QWidget
+from qtpy.QtGui import QSurfaceFormat
 import OpenGL.GL as gl
 
 from prodj.network.packets import PlayStatePlaying, PlayStateStopped
@@ -13,7 +13,7 @@ from prodj.pdblib.usbanlzdatabase import UsbAnlzDatabase
 from .waveform_blue_map import blue_map
 
 class GLWaveformWidget(QOpenGLWidget):
-  waveform_zoom_changed_signal = pyqtSignal(int)
+  waveform_zoom_changed_signal = Signal(int)
 
   def __init__(self, parent=None):
     super().__init__(parent)
@@ -342,4 +342,4 @@ if __name__ == '__main__':
       window.glWidget.setBeatgridData(db.get_beatgrid())
 
     window.show()
-    app.exec_()
+    app.exec()

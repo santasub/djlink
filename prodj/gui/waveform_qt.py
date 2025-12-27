@@ -1,8 +1,8 @@
 import logging
 
-from PyQt5.QtWidgets import QWidget
-from PyQt5.QtGui import QColor, QPainter, QPixmap
-from PyQt5.QtCore import Qt
+from qtpy.QtWidgets import QWidget
+from qtpy.QtGui import QColor, QPainter, QPixmap
+from qtpy.QtCore import Qt
 
 class WaveformWidget(QWidget):
   def __init__(self, parent):

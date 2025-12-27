@@ -2,16 +2,16 @@
 
 import sys
 from threading import Lock
-from PyQt5.QtWidgets import QApplication, QHBoxLayout
-from PyQt5.QtWidgets import QWidget
-from PyQt5.QtGui import QColor, QPainter, QPixmap
-from PyQt5.QtCore import pyqtSignal, Qt, QSize
+from qtpy.QtWidgets import QApplication, QHBoxLayout
+from qtpy.QtWidgets import QWidget
+from qtpy.QtGui import QColor, QPainter, QPixmap
+from qtpy.QtCore import Signal, Qt, QSize
 
 from prodj.pdblib.usbanlzdatabase import UsbAnlzDatabase
 from .waveform_blue_map import blue_map
 
 class PreviewWaveformWidget(QWidget):
-  redraw_signal = pyqtSignal()
+  redraw_signal = Signal()
 
   def __init__(self, parent):
     super().__init__(parent)
@@ -228,4 +228,4 @@ if __name__ == '__main__':
     window.previewWidget.setPosition(0.2)
 
     window.show()
-    app.exec_()
+    app.exec()
