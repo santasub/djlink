@@ -29,7 +29,7 @@ pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
 # Install from requirements
 pip install -r requirements.txt || true
 # Force install correct MIDI
-pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 pyalsaseq || echo "Note: pyalsaseq optional install failed."
+pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 alsaseq || echo "Note: alsaseq optional install failed."
 
 # 4. Create Launcher
 echo "[4/4] Creating launcher..."

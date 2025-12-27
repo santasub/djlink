@@ -25,7 +25,7 @@ pip install --upgrade pip setuptools wheel || true
 # Clean up potential MIDI conflicts that might have appeared with new code
 pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
 pip install -r requirements.txt || true
-pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 pyalsaseq || true
+pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 alsaseq || true
 
 # 3. Refresh Launcher
 echo "[3/3] Refreshing launcher..."
