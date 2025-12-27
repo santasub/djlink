@@ -41,7 +41,10 @@ class DataProvider(Thread):
 
   def stop(self):
     self.keep_running = False
+    self.join()
     self.pdb.stop()
+    for i in range(1,5):
+        self.dbc.closeSocket(i)
     self.metadata_store.stop()
     self.artwork_store.stop()
     self.waveform_store.stop()
@@ -49,7 +52,6 @@ class DataProvider(Thread):
     self.color_waveform_store.stop()
     self.color_preview_waveform_store.stop()
     self.beatgrid_store.stop()
-    self.join()
 
   def cleanup_stores_from_changed_media(self, player_number, slot):
     self.metadata_store.removeByPlayerSlot(player_number, slot)
@@ -123,7 +125,7 @@ class DataProvider(Thread):
     self._enqueue_request("beatgrid", self.beatgrid_store, (player_number, slot, track_id), callback)
 
   def get_mount_info(self, player_number, slot, track_id, callback=None):
-    self._enqueue_request("mount_info", None, (player_number, slot, track_id), callback)
+    return self._enqueue_request("mount_info", None, (player_number, slot, track_id), callback)
 
   def get_track_info(self, player_number, slot, track_id, callback=None):
     self._enqueue_request("track_info", None, (player_number, slot, track_id), callback)
@@ -131,10 +133,23 @@ class DataProvider(Thread):
   def _enqueue_request(self, request, store, params, callback):
     player_number = params[0]
     if player_number == 0 or player_number > 4:
-      logging.warning("invalid %s request parameters", request)
-      return
+        logging.warning("invalid %s request parameters", request)
+        return None
     logging.debug("enqueueing %s request with params %s", request, str(params))
+    # Create a future for the callback if the request is mount_info
+    future = None
+    if request == "mount_info":
+        from concurrent.futures import Future
+        future = Future()
+        original_callback = callback
+        def future_callback(*args, **kwargs):
+            if original_callback:
+                original_callback(*args, **kwargs)
+            future.set_result(args[-1])
+        callback = future_callback
+
     self.queue.put((request, store, params, callback, self.request_retry_count))
+    return future
 
   def _handle_request_from_store(self, store, params):
     if len(params) != 3:
@@ -220,5 +235,14 @@ class DataProvider(Thread):
         self._retry_request(request)
       except FatalQueryError as e:
         logging.error("%s request failed: %s", request[0], e)
+        # request tuple: (request_name, store, params, callback, retry_count)
+        callback = request[3]
+        if callback is not None:
+             try:
+                 # Call callback with None as reply to indicate failure
+                 params = request[2]
+                 callback(request[0], *params, None)
+             except Exception as cb_e:
+                 logging.error("Error invoking callback on failure: %s", cb_e)
         self.queue.task_done()
     logging.debug("DataProvider shutting down")

@@ -25,9 +25,9 @@ class NfsDownload:
     self.speed = 0
     self.future = Future()
 
-    self.max_in_flight = 4
+    self.max_in_flight = 16
     self.in_flight = 0
-    self.single_request_timeout = 5
+    self.single_request_timeout = 20
     self.max_stuck_retries = 3
     self.stuck_retry_count = 0
 
@@ -133,13 +133,28 @@ class NfsDownload:
         # We don't call fail_download here to avoid recursion if fail_download initiated cancellation.
         return
     except Exception as e:
-        logging.warning(f"Read request for offset {offset} failed: {e}")
-        self.fail_download(f"Failure on read at offset {offset}: {str(e)}")
+        logging.warning(f"Read request for offset {offset} failed: {e}. Retrying.")
+        # Do NOT fail download. Just return.
+        # Since we removed task from active_read_tasks and decremented in_flight,
+        # checking the state in sendReadRequests (or triggering it again) should cause a re-issue.
+        # However, sendReadRequests advances read_offset blindly in the current logic.
+        # We need to ensure this offset is re-queued.
+        
+        # Simple retry strategy: re-submit this specific block request immediately
+        if not self.future.done():
+             # We need to calculate chunk size again
+             remaining = self.size - offset
+             chunk = min(self.nfsclient.download_chunk_size, remaining)
+             
+             self.in_flight += 1
+             task = asyncio.create_task(self.nfsclient.NfsReadData(self.host, self.fhandle, offset, chunk))
+             self.active_read_tasks.add(task)
+             task.add_done_callback(functools.partial(self.readCallback, offset, task))
         return
 
     if offset >= self.write_offset:
         if offset in self.blocks:
-            logging.warning(f"Offset {offset} received (again?), but already in blocks. Ignoring new.")
+            logging.debug(f"Offset {offset} received (again?), but already in blocks. Ignoring new.")
         else:
             self.blocks[offset] = reply.data
     else:
@@ -171,6 +186,8 @@ class NfsDownload:
         self.speed = 0
       logging.info("download progress %d%% (%d/%d Bytes, %.2f MiB/s)",
                    self.progress, current_written_offset, self.size, self.speed)
+      if self.nfsclient.progress_callback:
+        self.nfsclient.progress_callback(self.src_path, self.progress)
 
   def writeBlocks(self):
     while self.write_offset in self.blocks:
@@ -254,5 +271,10 @@ class NfsDownload:
         logging.debug("fail_download() called for '%s' (msg: %s) but future was already done. State: %s", self.src_path, message, self.future)
 
 def generic_file_download_done_callback(future):
-  if future.exception() is not None:
-    logging.error("download failed (callback): %s", future.exception())
+  try:
+    if future.cancelled():
+      logging.info("download cancelled (callback)")
+    elif future.exception() is not None:
+      logging.error("download failed (callback): %s", future.exception())
+  except Exception as e:
+    logging.error("exception in download callback: %s", e)

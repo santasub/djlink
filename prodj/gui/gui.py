@@ -2,16 +2,16 @@ import sys
 import logging
 import math
 from threading import Lock
-from PyQt5.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QPushButton, QSizePolicy, QHBoxLayout, QVBoxLayout, QWidget
-from PyQt5.QtGui import QColor, QPainter, QPixmap
-from PyQt5.QtCore import pyqtSignal, Qt, QSize
+from qtpy.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QPushButton, QSizePolicy, QHBoxLayout, QVBoxLayout, QWidget
+from qtpy.QtGui import QColor, QPainter, QPixmap
+from qtpy.QtCore import Signal, Qt, QSize
 
 from .gui_browser import Browser, printableField
 from .waveform_gl import GLWaveformWidget
 from .preview_waveform_qt import PreviewWaveformWidget
 
 class ClickableLabel(QLabel):
-  clicked = pyqtSignal()
+  clicked = Signal()
   def mousePressEvent(self, event):
     self.clicked.emit()
 
@@ -42,7 +42,7 @@ class BeatBarWidget(QWidget):
     painter.end()
 
 class PlayerWidget(QFrame):
-  time_mode_remain_changed_signal = pyqtSignal(bool)
+  time_mode_remain_changed_signal = Signal(bool)
 
   def __init__(self, player_number, parent):
     super().__init__(parent)
@@ -338,8 +338,8 @@ class PlayerWidget(QFrame):
     self.update()
 
 class Gui(QWidget):
-  keepalive_signal = pyqtSignal(int)
-  client_change_signal = pyqtSignal(int)
+  keepalive_signal = Signal(int)
+  client_change_signal = Signal(int)
 
   def __init__(self, prodj, show_color_waveform=False, show_color_preview=False, arg_layout="xy"):
     super().__init__()

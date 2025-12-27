@@ -166,14 +166,18 @@ class ClientList:
       link_info = { key: status_packet.content[key] for key in ["name", "track_count", "playlist_count", "bytes_total", "bytes_free", "date"] }
       if status_packet.content.slot == "usb":
         c.usb_info = link_info
+        c.loaded_slot = "usb"
       elif status_packet.content.slot == "sd":
         c.sd_info = link_info
+        c.loaded_slot = "sd"
       else:
         logging.warning("Received link info for %s not implemented", status_packet.content.slot)
       logging.info("Player %d Link Info: %s \"%s\", %d tracks, %d playlists, %d/%dMB free",
         c.player_number, status_packet.content.slot, link_info["name"], link_info["track_count"], link_info["playlist_count"],
         link_info["bytes_free"]//1024//1024, link_info["bytes_total"]//1024//1024)
       self.mediaChanged(c.player_number, status_packet.content.slot)
+      if self.client_change_callback:
+          self.client_change_callback(c.player_number)
       return
     c.type = status_packet.type # cdj or djm
 
@@ -258,6 +262,7 @@ class ClientList:
 
       new_usb_state = status_packet.content.usb_state
       if c.usb_state != new_usb_state:
+        c.previous_loaded_slot = "usb"
         c.usb_state = new_usb_state
         if new_usb_state != "loaded":
           c.usb_info = {}
@@ -266,6 +271,7 @@ class ClientList:
         self.mediaChanged(c.player_number, "usb")
       new_sd_state = status_packet.content.sd_state
       if c.sd_state != new_sd_state:
+        c.previous_loaded_slot = "sd"
         c.sd_state = new_sd_state
         if new_sd_state != "loaded":
           c.sd_info = {}
@@ -341,6 +347,7 @@ class Client:
     self.sd_info = {}
     self.loaded_player_number = 0
     self.loaded_slot = "empty"
+    self.previous_loaded_slot = "empty"
     self.track_analyze_type = "unknown"
     self.state = []
     self.track_number = None

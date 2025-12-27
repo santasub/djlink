@@ -1,7 +1,7 @@
 import logging
-from PyQt5.QtWidgets import QComboBox, QHeaderView, QLabel, QPushButton, QSizePolicy, QTableView, QTextEdit, QHBoxLayout, QVBoxLayout, QWidget
-from PyQt5.QtGui import QPalette, QStandardItem, QStandardItemModel
-from PyQt5.QtCore import Qt, pyqtSignal
+from qtpy.QtWidgets import QComboBox, QHeaderView, QLabel, QPushButton, QSizePolicy, QTableView, QTextEdit, QHBoxLayout, QVBoxLayout, QWidget
+from qtpy.QtGui import QPalette, QStandardItem, QStandardItemModel
+from qtpy.QtCore import Qt, Signal
 
 from prodj.data.dbclient import sort_types
 
@@ -32,8 +32,8 @@ def printableField(field):
     return field.replace("_", " ").title()
 
 class Browser(QWidget):
-  handleRequestSignal = pyqtSignal()
-  refreshMediaSignal = pyqtSignal(str)
+  handleRequestSignal = Signal()
+  refreshMediaSignal = Signal(str)
 
   def __init__(self, prodj, player_number):
     super().__init__()
@@ -61,7 +61,7 @@ class Browser(QWidget):
     self.sort_box = QComboBox(self)
     for sort in sort_types:
       self.sort_box.addItem(printableField(sort), sort)
-    self.sort_box.currentIndexChanged[int].connect(self.sortChanged)
+    self.sort_box.currentIndexChanged.connect(self.sortChanged)
     self.sort_box.setStyleSheet("QComboBox { padding: 2px; border-style: outset; border-radius: 2px; border-width: 1px; border-color: gray; }")
     self.back_button = QPushButton("Back", self)
     self.back_button.clicked.connect(self.backButtonClicked)

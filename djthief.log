@@ -1,0 +1,295 @@
+DEBUG   datastore: 0x1107097c0 initialized
+DEBUG   datastore: 0x11070a030 initialized
+DEBUG   datastore: 0x11070a300 initialized
+DEBUG   datastore: 0x11070a3a0 initialized
+DEBUG   datastore: 0x11070a8a0 initialized
+DEBUG   datastore: 0x11070aa80 initialized
+DEBUG   datastore: 0x11070ad00 initialized
+DEBUG   datastore: 0x11070af80 initialized
+DEBUG   datastore: 0x11070afd0 initialized
+DEBUG   selector_events: Using selector: KqueueSelector
+INFO    prodj: Listening on 0.0.0.0:50000 for keepalive packets
+INFO    prodj: Listening on 0.0.0.0:50001 for beat packets
+INFO    prodj: Listening on 0.0.0.0:50002 for status packets
+DEBUG   dataprovider: DataProvider starting
+DEBUG   prodj: starting main loop
+INFO    prodj: Player number set to 5
+INFO    clientlist: New Player 2: XDJ-700, 192.168.1.169, c8:3d:fc:04:1d:8d
+DEBUG   ip: lo0 is has no MAC address, skipped.
+DEBUG   ip: gif0 is has no MAC address, skipped.
+DEBUG   ip: stf0 is has no MAC address, skipped.
+WARNING ip: en6 has no IPv4 address
+WARNING ip: en5 has no IPv4 address
+WARNING ip: ap1 has no IPv4 address
+INFO    prodj: Guessed own interface en0 ip 192.168.1.171 mask 255.255.255.0 mac f2:fe:ae:51:07:26
+INFO    vcdj: Starting virtual cdj with player number 5
+DEBUG   djthief: Player 2 changed. Loaded slot: empty
+DEBUG   djthief: Player 2 changed. Loaded slot: empty
+INFO    clientlist: New Player 5: Virtual CDJ, 192.168.1.171, f2:fe:ae:51:07:26
+DEBUG   vcdj: sending link info query to 192.168.1.169
+DEBUG   clientlist: Media usb in player 2 changed
+DEBUG   dataprovider: enqueueing metadata request with params (2, EnumIntegerString.new(3, 'usb'), 55)
+DEBUG   dataprovider: enqueueing beatgrid request with params (2, EnumIntegerString.new(3, 'usb'), 55)
+DEBUG   dataprovider: trying request metadata (2, EnumIntegerString.new(3, 'usb'), 55) from store
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   dataprovider: trying request metadata (2, EnumIntegerString.new(3, 'usb'), 55) from pdb
+DEBUG   djthief: Adding widget for player 2 slot usb
+DEBUG   pdbprovider: handling metadata request params (2, EnumIntegerString.new(3, 'usb'), 55)
+DEBUG   nfsclient: enqueueing download of /PIONEER/rekordbox/export.pdb from 192.168.1.169
+INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/rekordbox/export.pdb to databases/player-2-usb.pdb
+DEBUG   nfsclient: enqueueing download of /PIONEER/rekordbox/export.pdb from 192.168.1.169
+INFO    clientlist: Player 2 Link Info: usb "", 1078 tracks, 39 playlists, 202023/238501MB free
+DEBUG   clientlist: Media usb in player 2 changed
+INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/rekordbox/export.pdb to databases/player-2-usb.pdb
+DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
+DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
+DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
+DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
+DEBUG   nfsclient: looking up "PIONEER"
+WARNING nfsdownload: File databases/player-2-usb.pdb already exists, will be overwritten.
+DEBUG   nfsclient: looking up "PIONEER"
+DEBUG   nfsclient: looking up "rekordbox"
+DEBUG   nfsclient: looking up "rekordbox"
+DEBUG   nfsclient: looking up "export.pdb"
+DEBUG   nfsclient: looking up "export.pdb"
+INFO    nfsdownload: download progress 0% (1280/983040 Bytes, 0.03 MiB/s)
+INFO    nfsdownload: download progress 0% (1280/983040 Bytes, 0.04 MiB/s)
+INFO    nfsdownload: download progress 4% (39680/983040 Bytes, 0.38 MiB/s)
+INFO    nfsdownload: download progress 4% (39680/983040 Bytes, 0.45 MiB/s)
+INFO    nfsdownload: download progress 8% (79360/983040 Bytes, 0.49 MiB/s)
+INFO    nfsdownload: download progress 8% (79360/983040 Bytes, 0.54 MiB/s)
+INFO    nfsdownload: download progress 12% (119040/983040 Bytes, 0.49 MiB/s)
+INFO    nfsdownload: download progress 12% (119040/983040 Bytes, 0.52 MiB/s)
+INFO    nfsdownload: download progress 16% (157440/983040 Bytes, 0.53 MiB/s)
+INFO    nfsdownload: download progress 16% (157440/983040 Bytes, 0.56 MiB/s)
+INFO    nfsdownload: download progress 20% (197120/983040 Bytes, 0.55 MiB/s)
+INFO    nfsdownload: download progress 20% (197120/983040 Bytes, 0.56 MiB/s)
+INFO    nfsdownload: download progress 24% (236800/983040 Bytes, 0.56 MiB/s)
+INFO    nfsdownload: download progress 24% (236800/983040 Bytes, 0.59 MiB/s)
+INFO    nfsdownload: download progress 28% (276480/983040 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 28% (276480/983040 Bytes, 0.60 MiB/s)
+INFO    nfsdownload: download progress 32% (314880/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 32% (314880/983040 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 36% (354560/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 36% (354560/983040 Bytes, 0.59 MiB/s)
+INFO    nfsdownload: download progress 40% (394240/983040 Bytes, 0.56 MiB/s)
+INFO    nfsdownload: download progress 40% (394240/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 44% (432640/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 44% (432640/983040 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 48% (472320/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 48% (472320/983040 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 52% (512000/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 52% (512000/983040 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 56% (551680/983040 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 56% (551680/983040 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 60% (590080/983040 Bytes, 0.56 MiB/s)
+INFO    nfsdownload: download progress 64% (629760/983040 Bytes, 0.56 MiB/s)
+INFO    nfsdownload: download progress 68% (669440/983040 Bytes, 0.55 MiB/s)
+INFO    nfsdownload: download progress 72% (707840/983040 Bytes, 0.54 MiB/s)
+INFO    nfsdownload: download progress 76% (747520/983040 Bytes, 0.53 MiB/s)
+INFO    nfsdownload: download progress 80% (787200/983040 Bytes, 0.51 MiB/s)
+INFO    nfsdownload: download progress 84% (826880/983040 Bytes, 0.51 MiB/s)
+INFO    nfsdownload: download progress 88% (865280/983040 Bytes, 0.50 MiB/s)
+INFO    nfsdownload: download progress 92% (904960/983040 Bytes, 0.50 MiB/s)
+INFO    nfsdownload: download progress 96% (944640/983040 Bytes, 0.50 MiB/s)
+DEBUG   nfsdownload: All necessary read requests have been dispatched.
+INFO    nfsdownload: download progress 100% (983040/983040 Bytes, 0.49 MiB/s)
+INFO    nfsdownload: finished downloading /PIONEER/rekordbox/export.pdb to databases/player-2-usb.pdb, 983040 bytes, 0.49 MiB/s
+INFO    pdbdatabase: Loading database "databases/player-2-usb.pdb"
+DEBUG   nfsdownload: All necessary read requests have been dispatched.
+DEBUG   pdbdatabase: done collecting tracks
+DEBUG   pdbdatabase: done collecting artists
+DEBUG   pdbdatabase: done collecting albums
+DEBUG   pdbdatabase: done collecting playlists
+DEBUG   pdbdatabase: done collecting playlist_map
+DEBUG   pdbdatabase: done collecting artwork
+DEBUG   pdbdatabase: done collecting colors
+DEBUG   pdbdatabase: done collecting genres
+DEBUG   pdbdatabase: done collecting key_names
+DEBUG   pdbdatabase: done collecting labels
+INFO    pdbdatabase: Loaded 239 pages, 1078 tracks, 39 playlists
+DEBUG   dataprovider: trying request beatgrid (2, EnumIntegerString.new(3, 'usb'), 55) from store
+DEBUG   dataprovider: trying request beatgrid (2, EnumIntegerString.new(3, 'usb'), 55) from pdb
+DEBUG   pdbprovider: handling beatgrid request params (2, EnumIntegerString.new(3, 'usb'), 55)
+DEBUG   nfsclient: enqueueing download of /PIONEER/USBANLZ/P071/00016F01/ANLZ0000.DAT from 192.168.1.169
+INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/USBANLZ/P071/00016F01/ANLZ0000.DAT to None
+DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
+DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
+DEBUG   nfsclient: looking up "PIONEER"
+DEBUG   nfsclient: looking up "USBANLZ"
+DEBUG   nfsclient: looking up "P071"
+DEBUG   nfsclient: looking up "00016F01"
+DEBUG   nfsclient: looking up "ANLZ0000.DAT"
+INFO    nfsdownload: download progress 13% (1280/9334 Bytes, 0.12 MiB/s)
+INFO    nfsdownload: download progress 27% (2560/9334 Bytes, 0.22 MiB/s)
+INFO    nfsdownload: download progress 41% (3840/9334 Bytes, 0.30 MiB/s)
+INFO    nfsdownload: download progress 54% (5120/9334 Bytes, 0.39 MiB/s)
+DEBUG   nfsdownload: All necessary read requests have been dispatched.
+INFO    nfsdownload: download progress 68% (6400/9334 Bytes, 0.42 MiB/s)
+INFO    nfsdownload: download progress 82% (7680/9334 Bytes, 0.48 MiB/s)
+INFO    nfsdownload: download progress 95% (8960/9334 Bytes, 0.53 MiB/s)
+INFO    nfsdownload: download progress 100% (9334/9334 Bytes, 0.47 MiB/s)
+INFO    nfsdownload: finished downloading /PIONEER/USBANLZ/P071/00016F01/ANLZ0000.DAT to None, 9334 bytes, 0.47 MiB/s
+DEBUG   nfsclient: enqueueing download of /PIONEER/USBANLZ/P071/00016F01/ANLZ0000.EXT from 192.168.1.169
+INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/USBANLZ/P071/00016F01/ANLZ0000.EXT to None
+DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
+DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
+DEBUG   nfsclient: looking up "PIONEER"
+DEBUG   nfsclient: looking up "USBANLZ"
+DEBUG   nfsclient: looking up "P071"
+DEBUG   nfsclient: looking up "00016F01"
+DEBUG   nfsclient: looking up "ANLZ0000.EXT"
+INFO    nfsdownload: download progress 0% (1280/204756 Bytes, 0.12 MiB/s)
+INFO    nfsdownload: download progress 4% (8960/204756 Bytes, 0.57 MiB/s)
+INFO    nfsdownload: download progress 8% (16640/204756 Bytes, 0.73 MiB/s)
+INFO    nfsdownload: download progress 12% (25600/204756 Bytes, 0.42 MiB/s)
+INFO    nfsdownload: download progress 16% (33280/204756 Bytes, 0.43 MiB/s)
+INFO    nfsdownload: download progress 20% (40960/204756 Bytes, 0.47 MiB/s)
+INFO    nfsdownload: download progress 24% (49920/204756 Bytes, 0.53 MiB/s)
+INFO    nfsdownload: download progress 28% (57600/204756 Bytes, 0.58 MiB/s)
+INFO    nfsdownload: download progress 32% (66560/204756 Bytes, 0.59 MiB/s)
+INFO    nfsdownload: download progress 36% (74240/204756 Bytes, 0.62 MiB/s)
+INFO    nfsdownload: download progress 40% (81920/204756 Bytes, 0.65 MiB/s)
+INFO    nfsdownload: download progress 44% (90880/204756 Bytes, 0.69 MiB/s)
+INFO    nfsdownload: download progress 48% (98560/204756 Bytes, 0.67 MiB/s)
+INFO    nfsdownload: download progress 52% (107520/204756 Bytes, 0.70 MiB/s)
+INFO    nfsdownload: download progress 56% (115200/204756 Bytes, 0.71 MiB/s)
+INFO    nfsdownload: download progress 60% (122880/204756 Bytes, 0.72 MiB/s)
+INFO    nfsdownload: download progress 64% (131840/204756 Bytes, 0.72 MiB/s)
+INFO    nfsdownload: download progress 68% (139520/204756 Bytes, 0.72 MiB/s)
+INFO    nfsdownload: download progress 72% (148480/204756 Bytes, 0.73 MiB/s)
+INFO    nfsdownload: download progress 76% (156160/204756 Bytes, 0.75 MiB/s)
+INFO    nfsdownload: download progress 80% (163840/204756 Bytes, 0.77 MiB/s)
+INFO    nfsdownload: download progress 84% (172800/204756 Bytes, 0.78 MiB/s)
+INFO    nfsdownload: download progress 88% (180480/204756 Bytes, 0.80 MiB/s)
+INFO    nfsdownload: download progress 92% (189440/204756 Bytes, 0.81 MiB/s)
+INFO    nfsdownload: download progress 96% (197120/204756 Bytes, 0.81 MiB/s)
+DEBUG   nfsdownload: All necessary read requests have been dispatched.
+INFO    nfsdownload: download progress 100% (204756/204756 Bytes, 0.80 MiB/s)
+INFO    nfsdownload: finished downloading /PIONEER/USBANLZ/P071/00016F01/ANLZ0000.EXT to None, 204756 bytes, 0.80 MiB/s
+DEBUG   usbanlzdatabase: Loading DAT from buffer
+DEBUG   usbanlzdatabase: Loaded 7 tags
+DEBUG   usbanlzdatabase: Loading EXT from buffer
+DEBUG   usbanlzdatabase: Loaded 10 tags
+WARNING rpcreceiver: Removing XID 884 which has timed out
+WARNING nfsdownload: Read request for offset 555520 failed: Request timed out after 10 seconds
+ERROR   nfsdownload: Download failed for /PIONEER/rekordbox/export.pdb: Failure on read at offset 555520: Request timed out after 10 seconds
+ERROR   djthief: Failed to get PDB database: PDB database not available: database download from player 2 failed: Failure on read at offset 555520: Request timed out after 10 seconds
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+DEBUG   djthief: Player 2 changed. Loaded slot: usb
+INFO    djthief: Shutting down...
+WARNING dbclient: Requested to delete unexistant socket for player 1
+DEBUG   datastore: 0x1107097c0 stopped
+DEBUG   datastore: 0x11070a030 stopped
+WARNING dbclient: Requested to delete unexistant socket for player 2
+WARNING dbclient: Requested to delete unexistant socket for player 3
+WARNING dbclient: Requested to delete unexistant socket for player 4
+DEBUG   datastore: 0x11070a300 stopped
+DEBUG   datastore: 0x11070a3a0 stopped
+DEBUG   datastore: 0x11070aa80 stopped
+DEBUG   datastore: 0x11070ad00 stopped
+DEBUG   datastore: 0x11070a8a0 stopped
+DEBUG   datastore: 0x11070af80 stopped
+DEBUG   datastore: 0x11070afd0 stopped
+DEBUG   prodj: main loop finished
+DEBUG   dataprovider: DataProvider shutting down

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 import logging
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QPalette
-from PyQt5.QtCore import Qt
+from qtpy.QtWidgets import QApplication
+from qtpy.QtGui import QPalette
+from qtpy.QtCore import Qt
 import signal
 import argparse
 

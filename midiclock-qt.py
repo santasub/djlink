@@ -4,8 +4,8 @@ import sys
 import logging
 import argparse
 
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import pyqtSignal, QObject
+from qtpy.QtWidgets import QApplication
+from qtpy.QtCore import Signal, QObject
 
 from prodj.core.prodj import ProDj
 from prodj.gui.midiclock_widgets import MidiClockMainWindow
@@ -23,8 +23,8 @@ class SignalBridge(QObject):
     A QObject bridge to safely emit signals from non-Qt threads (like ProDj callbacks)
     to the Qt main thread.
     """
-    client_change_signal = pyqtSignal(int)
-    master_change_signal = pyqtSignal(int) # Player number of the new master, or 0 if no master
+    client_change_signal = Signal(int)
+    master_change_signal = Signal(int) # Player number of the new master, or 0 if no master
     # Add more signals as needed
 
 class MidiClockApp:
@@ -164,7 +164,7 @@ class MidiClockApp:
         self.prodj.vcdj_set_player_number(6) # Use a different player number than default monitor
         self.prodj.vcdj_enable()
 
-        exit_code = self.app.exec_()
+        exit_code = self.app.exec()
 
         logging.info("Shutting down MidiClock UI and ProDJ Link listener...")
         self.prodj.stop()

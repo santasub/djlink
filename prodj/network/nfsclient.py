@@ -25,8 +25,12 @@ class NfsClient:
       "sd": "/B/",
       "usb": "/C/"
     }
+    self.progress_callback = None
 
-    self.setDownloadChunkSize(1280) # + 142 bytes total overhead is still safe below 1500
+    self.setDownloadChunkSize(1400) # + 142 bytes total overhead is still safe below 1500
+
+  def set_progress_callback(self, callback):
+    self.progress_callback = callback
 
   def start(self):
     self.openSockets()
@@ -140,7 +144,11 @@ class NfsClient:
       "count": size,
       "totalcount": 0
     }
-    return await self.NfsCall(host, "read", nfscall)
+    try:
+        return await self.NfsCall(host, "read", nfscall)
+    except Exception as e:
+        logging.debug(f"NfsReadData error (captured): {e}")
+        raise e
 
   # download file at src_path from player with ip from slot
   # save to dst_path if it is not empty, otherwise return a buffer
