@@ -46,7 +46,7 @@ class MidiClockApp:
                     stop:0 #1a1a1a, stop:1 #2a2a2a);
                 color: #e5e7eb;
                 font-family: "Segoe UI", "San Francisco", "Helvetica Neue", Arial, sans-serif;
-                font-size: 13pt;
+                font-size: 14pt;
             }
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -141,9 +141,9 @@ class MidiClockApp:
                 border: 2px solid #3b3b3b;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #2d2d2d, stop:1 #252525);
-                margin-top: 15px;
-                padding-top: 15px;
-                border-radius: 10px;
+                margin-top: 25px;
+                padding-top: 25px;
+                border-radius: 12px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -195,7 +195,10 @@ class MidiClockApp:
         # For now, client_change can trigger UI updates which can check master status.
 
         self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge)
-        self.main_window.show()
+        if self.args.fullscreen:
+            self.main_window.showFullScreen()
+        else:
+            self.main_window.show()
 
         # Connect signals from bridge to main window slots
         # Note: MidiClockMainWindow._connect_signals already connects to signal_bridge.client_change_signal
@@ -235,6 +238,8 @@ def main():
                         help="Set the logging level (default: info).")
     parser.add_argument('--iface', type=str,
                         help="Name of the interface to use (e.g. eth0).")
+    parser.add_argument('--fullscreen', action='store_true',
+                        help="Launch in fullscreen mode (no window borders).")
     # Add other arguments if needed, e.g., for forcing MIDI backend eventually
 
     args = parser.parse_args()
