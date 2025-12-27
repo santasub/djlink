@@ -1,76 +1,48 @@
 #!/bin/bash
 
-# ProDJ Link MIDI Clock Utility - Linux Auto-Install Script
-# Supported Platforms: Raspberry Pi OS, Debian, Ubuntu
-
-# Removed set -e to handle optional packages gracefully
-
-REPO_URL="https://github.com/santasub/djlink.git"
-INSTALL_DIR="python-prodj-link"
+# ProDJ Link MIDI Clock - Simple Installer
+# Run this from the repository folder
 
 echo "----------------------------------------------------"
-echo "  ProDJ Link MIDI Clock Utility Installer"
+echo "  ProDJ Link MIDI Clock - Installer"
 echo "----------------------------------------------------"
 
-# 1. Update and install system dependencies
-echo "[1/5] Installing system dependencies (requires sudo)..."
+# 1. System Dependencies
+echo "[1/4] Installing system dependencies (sudo)..."
 sudo apt-get update || true
-# We try to install multiple backends, as availability varies by OS version
-# python3-pyqt5 is very common on older Pi OS, python3-pyside6 is on newer ones.
 sudo apt-get install -y \
-    python3-venv \
-    python3-pip \
-    python3-dev \
-    git \
-    libasound2-dev \
-    libxcb-xinerama0 \
-    libxcb-cursor0 \
-    libxkbcommon-x11-0 \
-    libdbus-1-3 \
-    libqt5gui5 \
-    python3-pyqt5 || echo "Warning: python3-pyqt5 not found"
+    python3-venv python3-pip python3-dev \
+    git libasound2-dev libjack-dev \
+    libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 libdbus-1-3 \
+    libqt5gui5 python3-pyqt5 python3-pyside6 || echo "Warning: Some system packages failed to install."
 
-# Try to install PySide6 as well if available
-sudo apt-get install -y python3-pyside6 || echo "Warning: python3-pyside6 not found"
-
-# 2. Clone repository
-if [ -d "$INSTALL_DIR" ]; then
-    echo "[2/5] Folder $INSTALL_DIR already exists, pulling updates..."
-    # cd "$INSTALL_DIR" # We are likely already in it if they pulled it
-    git pull || true
-else
-    echo "[2/5] Cloning repository..."
-    git clone "$REPO_URL" "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-fi
-
-# 3. Setup Virtual Environment
-echo "[3/5] Setting up virtual environment..."
+# 2. Virtual Environment
+echo "[2/4] Setting up Python environment..."
 python3 -m venv --system-site-packages .venv || true
 source .venv/bin/activate
 
-# 4. Install Python dependencies
-echo "[4/5] Installing Python dependencies..."
-pip install --upgrade pip || true
-# CRITICAL: Purge any conflicting rtmidi packages
-echo "Cleaning up MIDI library conflicts..."
+# 3. Python Dependencies
+echo "[3/4] Installing Python libraries..."
+pip install --upgrade pip setuptools wheel || true
+# Clean up MIDI conflicts
 pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
-# We use requirements.txt which now excludes PyQt5 to avoid build failures on Pi
+# Install from requirements
 pip install -r requirements.txt || true
-# Force install the correct MIDI library
-echo "Installing correct MIDI library..."
-pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8
+# Force install correct MIDI
+pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 pyalsaseq || echo "Note: pyalsaseq optional install failed."
 
-# 5. Create launch helper
-echo "[5/5] Creating locally executable launch script..."
-cat <<'EOF' > start_midiclock.sh
+# 4. Create Launcher
+echo "[4/4] Creating launcher..."
+REPO_ROOT=$(pwd)
+cat <<EOF > start_midiclock.sh
 #!/bin/bash
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-source "$DIR/.venv/bin/activate"
-python3 "$DIR/midiclock-qt.py" "$@"
+DIR="\$( cd "\$( dirname "\${BASH_SOURCE[0]}" )" && pwd )"
+source "\$DIR/.venv/bin/activate"
+python3 "\$DIR/midiclock-qt.py" "\$@"
 EOF
 chmod +x start_midiclock.sh
 
 echo "----------------------------------------------------"
-echo "Note: Replace 'eth0' with your actual interface (use 'ip a' to check)."
+echo "  Installation finished!"
+echo "  Run with: ./start_midiclock.sh --iface wlan0"
 echo "----------------------------------------------------"
