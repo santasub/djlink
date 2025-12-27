@@ -52,8 +52,8 @@ source .venv/bin/activate
 # 4. Install Python dependencies
 echo "[4/5] Installing Python dependencies..."
 pip install --upgrade pip
+# We use requirements.txt which now excludes PyQt5 to avoid build failures on Pi
 pip install -r requirements.txt
-pip install PySide6  # Ensure PySide6 is available if system package was missed
 
 # 5. Create launch helper
 echo "[5/5] Creating locally executable launch script..."
