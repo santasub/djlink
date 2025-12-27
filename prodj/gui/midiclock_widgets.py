@@ -111,10 +111,10 @@ class PlayerTileWidget(QFrame):
             current_style = """
                 PlayerTileWidget {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #3a1a1a, stop:1 #2a1515);
-                    border: 3px solid #ef4444;
-                    border-radius: 12px;
-                    padding: 12px;
+                        stop:0 #1a3a2a, stop:1 #153025);
+                    border: 3px solid #10b981;
+                    border-radius: 16px;
+                    padding: 16px;
                 }
             """
             self.bpm_label.setText("BPM: --.--")
@@ -197,13 +197,13 @@ class MidiClockMainWindow(QWidget):
         self.midi_led.setStyleSheet("""
             background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
                 fx:0.5, fy:0.5, stop:0 #10b981, stop:1 #059669);
-            border: 2px solid #10b981;
-            border-radius: 12px;
+            border: 3px solid #10b981;
+            border-radius: 20px;
         """)
-        QTimer.singleShot(80, lambda: self.midi_led.setStyleSheet("""
+        QTimer.singleShot(100, lambda: self.midi_led.setStyleSheet("""
             background: #2d2d2d;
-            border: 2px solid #4a4a4a;
-            border-radius: 12px;
+            border: 3px solid #4a4a4a;
+            border-radius: 20px;
         """))
 
     def adjust_pitch(self, direction):
@@ -235,11 +235,11 @@ class MidiClockMainWindow(QWidget):
         
         self.midi_led = QFrame()
         self.midi_led.setFrameStyle(QFrame.NoFrame)
-        self.midi_led.setFixedSize(24, 24)
+        self.midi_led.setFixedSize(40, 40)
         self.midi_led.setStyleSheet("""
             background: #2d2d2d;
-            border: 2px solid #4a4a4a;
-            border-radius: 12px;
+            border: 3px solid #4a4a4a;
+            border-radius: 20px;
         """)
         row1.addWidget(self.midi_led)
 
@@ -256,8 +256,10 @@ class MidiClockMainWindow(QWidget):
         self.settings_button.clicked.connect(self.open_settings_dialog)
         row1.addWidget(self.settings_button)
         row1.addStretch()
+        row1.setSpacing(20) # Add significant spacing between touch targets
         
         controls_layout.addLayout(row1)
+        controls_layout.addSpacing(10)
 
         # Row 2: Manual BPM Controls
         row2 = QHBoxLayout()
@@ -326,6 +328,7 @@ class MidiClockMainWindow(QWidget):
         pitch_group.setLayout(pitch_layout)
         row2.addWidget(pitch_group)
         row2.addStretch()
+        row2.setSpacing(20)
         
         controls_layout.addLayout(row2)
 
