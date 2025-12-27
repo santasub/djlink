@@ -19,6 +19,7 @@ class MidiClock(Thread):
     self.add_ns = 0
     self.enqueue_at_once = 24
     self.beat_callback = None
+    self.delay = 60.0/120.0/24.0 # Default 120 BPM
 
     # this call causes /proc/asound/seq/clients to be created
     alsaseq.client('MidiClock', 0, 1, True)
