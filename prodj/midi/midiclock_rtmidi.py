@@ -16,6 +16,7 @@ class MidiClock(Thread):
     self.calibration_cycles = 60
     self.midiout = rtmidi.MidiOut()
     self.beat_callback = None
+    self.phase_offset = 0.0
 
   def open(self, preferred_name=None, preferred_port=0):
     available_ports = self.midiout.get_ports()
@@ -50,7 +51,8 @@ class MidiClock(Thread):
         sleep_duration = self.delay - cal
         if sleep_duration < 0:
             sleep_duration = 0 # Prevent error and effectively busy-wait if already behind
-        time.sleep(sleep_duration)
+        time.sleep(sleep_duration + self.phase_offset)
+        self.phase_offset = 0.0
       now = time.time()
       # Ensure calibration_cycles is not zero to prevent DivisionByZeroError, though it's fixed at 60
       if self.calibration_cycles > 0:
@@ -72,6 +74,18 @@ class MidiClock(Thread):
     if self.delay < 0:
         self.delay = 0
     logging.info("BPM {} with pitch offset {}ms, delay {}s".format(bpm, pitch_offset, self.delay))
+
+  def adjust_phase(self, ms):
+    """Shifts the grid by temporarily adjusting the next sleep duration."""
+    # For rtmidi, we can just shift the 'last' reference timestamp
+    # A positive ms means we want the next tick to happen LATER, so we decrease 'last'
+    offset_s = ms / 1000.0
+    # self.last is handled in the run() loop. We need a way to pass this offset.
+    # Let's add an atomic offset variable or just modify the loop.
+    if not hasattr(self, 'phase_offset'):
+        self.phase_offset = 0.0
+    self.phase_offset += offset_s
+    logging.info("rtmidi phase offset scheduled: %f ms", ms)
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

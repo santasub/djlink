@@ -11,7 +11,11 @@ def guess_own_iface(match_ips, iface=None):
     ifaces = [iface]
 
   for iface in ifaces:
-    ifa = ni.ifaddresses(iface)
+    try:
+      ifa = ni.ifaddresses(iface)
+    except ValueError:
+      logging.warning(f"Interface {iface} not found or invalid.")
+      continue
 
     if ni.AF_LINK not in ifa or len(ifa[ni.AF_LINK]) == 0:
       logging.debug("{} is has no MAC address, skipped.".format(iface))

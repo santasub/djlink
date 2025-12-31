@@ -72,9 +72,10 @@ class PDBProvider:
 
   def get_db(self, player_number, slot):
     if (player_number, slot) not in self.dbs:
+      db = None
       try:
         db = self.download_and_parse_pdb(player_number, slot)
-      except FatalQueryError as e:
+      except Exception as e:
         db = InvalidPDBDatabase(str(e))
       finally:
         self.dbs[player_number, slot] = db

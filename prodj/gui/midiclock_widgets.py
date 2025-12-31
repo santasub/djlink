@@ -173,7 +173,8 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_mode_active = False
         self.manual_bpm_value = 120.0
         self.tap_timestamps = []
-        self.pitch_offset = 0.0 # In milliseconds
+        self.precision_pitch_offset = 0.0 # Renamed from pitch_offset
+        self.last_prodj_beat_time = None
 
         self.midi_clock_instance = None # Will hold AlsaMidiClock or RtMidiClock instance
         self.preferred_midi_backend = None # "ALSA" or "rtmidi"
@@ -206,16 +207,41 @@ class MidiClockMainWindow(QWidget):
             border-radius: 20px;
         """))
 
-    def adjust_pitch(self, direction):
+    def adjust_precision_pitch(self, direction):
         amount = self.pitch_amount_spinbox.value()
-        self.pitch_offset += amount * direction
-        self.pitch_label.setText(f"Offset: {self.pitch_offset:+.1f} ms")
+        self.precision_pitch_offset += amount * direction
+        self.pitch_label.setText(f"Pitch: {self.precision_pitch_offset:+.1f} ms")
         self.update_midi_clock_source_logic()
     
-    def reset_pitch_offset(self):
-        self.pitch_offset = 0.0
-        self.pitch_label.setText("Offset: 0.0 ms")
+    def reset_precision_pitch(self):
+        self.precision_pitch_offset = 0.0
+        self.pitch_label.setText("Pitch: 0.0 ms")
         self.update_midi_clock_source_logic()
+
+    def nudge(self, ms):
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            if hasattr(self.midi_clock_instance, "adjust_phase"):
+                self.midi_clock_instance.adjust_phase(ms)
+            else:
+                logging.warning("MIDI backend does not support phase adjustment (nudge).")
+
+    def sync_to_grid(self):
+        # We want to align the NEXT MIDI tick to a ProDJ beat boundary.
+        # This is a bit complex in a distributed system, but a manual "adjust_phase"
+        # of the current offset between MIDI beat and ProDJ beat is a good start.
+        # For now, let's keep it simple: just nudge to align with the *last* known ProDJ beat.
+        if self.last_prodj_beat_time is None:
+            QMessageBox.warning(self, "Sync Error", "No ProDJ Link beat received yet. Play a track first.")
+            return
+        
+        # Calculate time since last beat
+        elapsed_since_beat = time.time() - self.last_prodj_beat_time
+        # We want the next MIDI 'i % 24' to happen exactly at beat transitions.
+        # This implementation will be refined, but let's start with a basic phase shift.
+        # For a manual sync button, we'll just send a nudge of the current misalignment.
+        # Actually, let's just use a large nudge or a special 'reset grid' command if available.
+        # For now, we'll just allow the user to manual nudge.
+        pass
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -308,12 +334,12 @@ class MidiClockMainWindow(QWidget):
         row2.addWidget(manual_group)
 
         # Timing adjustment redesign
-        pitch_group = QGroupBox("Fine Timing")
+        pitch_group = QGroupBox("Precision Pitch (Speed)")
         pitch_layout = QVBoxLayout()
         pitch_layout.setSpacing(10)
         
         pitch_top = QHBoxLayout()
-        self.pitch_label = QLabel("0.0ms")
+        self.pitch_label = QLabel("Pitch: 0.0ms")
         pitch_label_font = self.pitch_label.font()
         pitch_label_font.setBold(True)
         pitch_label_font.setPointSize(14)
@@ -332,20 +358,40 @@ class MidiClockMainWindow(QWidget):
         
         pitch_bottom = QHBoxLayout()
         self.pitch_down_button = QPushButton("−")
-        self.pitch_down_button.clicked.connect(lambda: self.adjust_pitch(-1))
+        self.pitch_down_button.clicked.connect(lambda: self.adjust_precision_pitch(-1))
         pitch_bottom.addWidget(self.pitch_down_button)
         
         self.pitch_up_button = QPushButton("+")
-        self.pitch_up_button.clicked.connect(lambda: self.adjust_pitch(1))
+        self.pitch_up_button.clicked.connect(lambda: self.adjust_precision_pitch(1))
         pitch_bottom.addWidget(self.pitch_up_button)
         
         reset_button = QPushButton("Reset")
-        reset_button.clicked.connect(self.reset_pitch_offset)
+        reset_button.clicked.connect(self.reset_precision_pitch)
         pitch_bottom.addWidget(reset_button)
         pitch_layout.addLayout(pitch_bottom)
         
-        pitch_group.setLayout(pitch_layout)
-        row2.addWidget(pitch_group)
+        # Phase Control Section (Nudge & Sync)
+        phase_group = QGroupBox("Grid Alignment (Phase)")
+        phase_layout = QVBoxLayout()
+        phase_layout.setSpacing(10)
+
+        nudge_layout = QHBoxLayout()
+        self.nudge_minus_button = QPushButton("<< Nudge")
+        self.nudge_minus_button.clicked.connect(lambda: self.nudge(-5.0)) # 5ms nudge
+        nudge_layout.addWidget(self.nudge_minus_button)
+
+        self.nudge_plus_button = QPushButton("Nudge >>")
+        self.nudge_plus_button.clicked.connect(lambda: self.nudge(5.0))
+        nudge_layout.addWidget(self.nudge_plus_button)
+        phase_layout.addLayout(nudge_layout)
+
+        self.sync_button = QPushButton("SYNC GRID")
+        self.sync_button.setStyleSheet("background-color: #1e3a8a; border: 2px solid #3b82f6; font-weight: bold;")
+        self.sync_button.clicked.connect(self.sync_to_grid)
+        phase_layout.addWidget(self.sync_button)
+
+        phase_group.setLayout(phase_layout)
+        row2.addWidget(phase_group)
         
         controls_layout.addLayout(row2)
 
@@ -364,6 +410,7 @@ class MidiClockMainWindow(QWidget):
     def _connect_signals(self):
         self.signal_bridge.client_change_signal.connect(self.handle_client_or_master_change)
         self.signal_bridge.beat_signal.connect(self._on_beat_signal)
+        self.signal_bridge.prodj_beat_signal.connect(self.handle_prodj_beat)
         # self.signal_bridge.master_change_signal.connect(self.handle_client_or_master_change) # Can simplify if client_change covers master status
 
     def handle_client_or_master_change(self, player_number_changed=None):
@@ -617,10 +664,58 @@ class MidiClockMainWindow(QWidget):
             self.midi_port_combo.setEnabled(True)
         self.update_global_status_label()
 
+    def handle_prodj_beat(self, player_number, beat_number):
+        # Store timestamp of the beat for sync reference
+        # Determine current active sync source to match BPM logic
+        active_source = self.selected_player_source
+        if active_source is None:
+            # Look for network master
+            for client in self.prodj.cl.clients:
+                if client.type == "cdj" and "master" in client.state:
+                    if client.player_number in self.player_tiles and not self.player_tiles[client.player_number].is_dropped:
+                        active_source = client.player_number
+                        break
+        
+        if player_number == active_source:
+            self.last_prodj_beat_time = time.time()
+            logging.debug(f"Sync Beat tracked for Player {player_number}")
+
+    def sync_to_grid(self):
+        if self.last_prodj_beat_time is None:
+            QMessageBox.warning(self, "Sync Error", "No ProDJ Link beat received yet. Play a track first.")
+            return
+
+        if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
+            return
+
+        # Simple approach: How long ago was the last beat?
+        # We want to shift the MIDI phase so that Tick 0 aligns with that beat.
+        elapsed_since_beat = (time.time() - self.last_prodj_beat_time) * 1000.0 # ms
+        
+        # We need the current BPM to know the beat period
+        # This is stored in self.midi_clock_instance.delay (but converted to ms)
+        delay_ms = self.midi_clock_instance.delay * 1000.0 # Time per MIDI tick
+        beat_period_ms = delay_ms * 24.0
+        
+        # Misalignment is elapsed_since_beat modulo beat_period
+        misalignment = elapsed_since_beat % beat_period_ms
+        
+        # We want to nudge the MIDI clock SOONER by 'misalignment' ms 
+        # or LATER by 'beat_period - misalignment' ms.
+        # Let's nudge by the smaller amount for faster sync.
+        if misalignment > beat_period_ms / 2:
+            nudge_amount = beat_period_ms - misalignment # Nudge forward (negative phase shift)
+            self.nudge(-nudge_amount)
+        else:
+            nudge_amount = -misalignment # Nudge backward (positive phase shift)
+            self.nudge(nudge_amount)
+
+        logging.info(f"Sync Grid: Misalignment was {misalignment:.2f}ms. Nudging by {nudge_amount:.2f}ms")
+
     def update_midi_clock_source_logic(self):
         if self.manual_bpm_mode_active:
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.pitch_offset)
+                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
             self.update_global_status_label()
             return
 
@@ -694,10 +789,10 @@ class MidiClockMainWindow(QWidget):
 
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             if final_bpm_to_set is not None and final_bpm_to_set > 0:
-                self.midi_clock_instance.setBpm(final_bpm_to_set, self.pitch_offset)
+                self.midi_clock_instance.setBpm(final_bpm_to_set, self.precision_pitch_offset)
             else:
                 logging.error("Attempting to set invalid BPM (None or <=0). Defaulting to 120.")
-                self.midi_clock_instance.setBpm(120, self.pitch_offset)
+                self.midi_clock_instance.setBpm(120, self.precision_pitch_offset)
 
         self.update_global_status_label()
 
@@ -719,7 +814,7 @@ class MidiClockMainWindow(QWidget):
             self.tap_timestamps = []
 
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value)
+                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
             logging.info(f"Manual BPM mode enabled. Set to {self.manual_bpm_value:.1f} BPM.")
         else:
             self.manual_mode_button.setText("Enable Manual BPM")
@@ -733,7 +828,7 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
         self.tap_timestamps = []
         if self.manual_bpm_mode_active and self.midi_clock_instance and self.midi_clock_instance.is_alive():
-            self.midi_clock_instance.setBpm(self.manual_bpm_value)
+            self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
         if self.manual_bpm_mode_active:
             self.update_global_status_label()
 
@@ -770,7 +865,7 @@ class MidiClockMainWindow(QWidget):
             self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
 
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value)
+                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
             logging.info(f"Tapped BPM: {self.manual_bpm_value:.2f} (avg over {len(intervals)} intervals)")
             self.update_global_status_label()
         else:

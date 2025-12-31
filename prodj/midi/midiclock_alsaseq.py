@@ -122,6 +122,18 @@ class MidiClock(Thread):
     self.add_ns = math.floor(1e9*(self.delay-self.add_s))
     logging.info("Midi BPM %d with pitch offset %fms, delay %.9fs", bpm, pitch_offset, self.delay)
 
+  def adjust_phase(self, ms):
+    """Shifts the MIDI clock grid by ms milliseconds (positive = later, negative = sooner)."""
+    delta_ns = int(ms * 1_000_000)
+    self.time_ns += delta_ns
+    while self.time_ns >= 1_000_000_000:
+      self.time_s += 1
+      self.time_ns -= 1_000_000_000
+    while self.time_ns < 0:
+      self.time_s -= 1
+      self.time_ns += 1_000_000_000
+    logging.info("Phase adjusted by %s ms (new time: %d.%09d)", ms, self.time_s, self.time_ns)
+
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
   mc = MidiClock()
