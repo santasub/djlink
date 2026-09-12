@@ -50,30 +50,49 @@ else:
     _BUSYWAIT_GUARD_S = 0.0002
 
 
+def list_ports():
+  """Return available output port names without holding any OS resource.
+  Creates and immediately destroys a temporary MidiOut so the WinMM/CoreMIDI
+  handle is released before the real output port is opened."""
+  tmp = rtmidi.MidiOut()
+  ports = tmp.get_ports() or []
+  del tmp
+  return ports
+
+
 class MidiClock(Thread):
-  def __init__(self, preferred_port=None):
+  def __init__(self):
     super().__init__(daemon=True)
     self.keep_running = True
     self.delay = 1.0           # seconds per MIDI tick (set via setBpm)
-    self.midiout = rtmidi.MidiOut()
+    self.midiout = None        # created in open() — no handle held before use
     self.beat_callback = None
     self._phase_offset_s = 0.0  # one-shot phase nudge in seconds
 
-  def open(self, preferred_name=None, preferred_port=0):
-    available_ports = self.midiout.get_ports()
+  def open(self, preferred_port=0, preferred_name=None):
+    """Open the MIDI output port.
+    preferred_port: int index (from list_ports()) — used first.
+    preferred_name: fallback string match if index is out of range."""
+    available_ports = list_ports()
     if not available_ports:
-      raise Exception("No available midi ports")
+      raise Exception("No available MIDI output ports")
 
     port_index = 0
+    if isinstance(preferred_port, int) and 0 <= preferred_port < len(available_ports):
+      port_index = preferred_port
+    elif preferred_name:
+      for i, p in enumerate(available_ports):
+        if preferred_name in p:
+          port_index = i
+          break
+
     logging.debug("Available MIDI ports:")
-    for index, port in enumerate(available_ports):
-      logging.debug("  [%d] %s", index, port)
-      port_split = port.split(':')
-      name = port_split[0]
-      port_num = port_split[-1]
-      if preferred_name is None or (name == preferred_name and port_num == str(preferred_port)):
-        port_index = index
+    for i, p in enumerate(available_ports):
+      logging.debug("  [%d] %s%s", i, p, " <-- selected" if i == port_index else "")
     logging.info("rtmidi: opening port index %d (%s)", port_index, available_ports[port_index])
+
+    # Fresh MidiOut — no previously held handle can block it
+    self.midiout = rtmidi.MidiOut()
     self.midiout.open_port(port_index)
 
   def set_beat_callback(self, callback):

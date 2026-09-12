@@ -7,7 +7,7 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
 from qtpy.QtCore import Qt, Signal, QTimer
 
 # MIDI Clock imports
-from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock
+from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock, list_ports as rtmidi_list_ports
 AlsaMidiClock = None
 if sys.platform.startswith('linux'): # Now sys is defined
     try:
@@ -683,7 +683,7 @@ class MidiClockMainWindow(QWidget):
 
     def populate_midi_ports(self):
         self.midi_port_combo.clear()
-        self._determine_midi_backend() # Ensure self.MidiClockImpl is set
+        self._determine_midi_backend()
 
         if self.MidiClockImpl is None:
             self.midi_port_combo.addItem("No MIDI Backend!")
@@ -691,25 +691,27 @@ class MidiClockMainWindow(QWidget):
             self.start_stop_button.setEnabled(False)
             return
 
-        # Create a temporary instance to list ports
-        # This instance should not start any threads or acquire system resources beyond port listing.
-        temp_clock_instance = None
         try:
-            temp_clock_instance = self.MidiClockImpl()
-            ports = []
+            ports = []  # list of (display_name, open_kwargs)
             if self.MidiClockImpl == AlsaMidiClock:
-                if hasattr(temp_clock_instance, 'iter_alsa_seq_clients'):
-                    for client_id, name, port_ids in temp_clock_instance.iter_alsa_seq_clients():
-                        for p_id in port_ids:
-                            ports.append(f"{name} ({client_id}:{p_id})")
+                # ALSA: use a temp instance only to read /proc - no WinMM handles
+                tmp = AlsaMidiClock.__new__(AlsaMidiClock)
+                tmp.__init__()  # safe: only opens alsaseq client
+                for client_id, name, port_ids in tmp.iter_alsa_seq_clients():
+                    for p_id in port_ids:
+                        label = f"{name} ({client_id}:{p_id})"
+                        ports.append((label, {'preferred_name': name, 'preferred_port': p_id}))
+                del tmp
             elif self.MidiClockImpl == RtMidiClock:
-                if hasattr(temp_clock_instance, 'midiout'):
-                    rtmidi_ports = temp_clock_instance.midiout.get_ports()
-                    if rtmidi_ports:
-                        ports.extend(rtmidi_ports)
+                # Use the static helper - no MidiOut handle kept open
+                for idx, name in enumerate(rtmidi_list_ports()):
+                    ports.append((name, {'preferred_port': idx}))
 
             if ports:
-                self.midi_port_combo.addItems(ports)
+                for label, kwargs in ports:
+                    # store open-kwargs as UserRole data so toggle_midi_clock_output
+                    # never has to parse the display string
+                    self.midi_port_combo.addItem(label, userData=kwargs)
                 self.midi_port_combo.setEnabled(True)
                 self.start_stop_button.setEnabled(True)
             else:
@@ -717,15 +719,10 @@ class MidiClockMainWindow(QWidget):
                 self.midi_port_combo.setEnabled(False)
                 self.start_stop_button.setEnabled(False)
         except Exception as e:
-            logging.error(f"Error listing MIDI ports: {e}")
+            logging.error(f"Error listing MIDI ports: {e}", exc_info=True)
             self.midi_port_combo.addItem("Error listing ports")
             self.midi_port_combo.setEnabled(False)
             self.start_stop_button.setEnabled(False)
-        finally:
-            # Ensure any resources from temp_clock_instance are released if necessary
-            # For MidiClock, __del__ might handle it, or if it has an explicit close/del.
-            # Since it's not started, it should be minimal.
-            del temp_clock_instance
 
 
     def toggle_midi_clock_output(self):
@@ -748,40 +745,12 @@ class MidiClockMainWindow(QWidget):
 
             self.midi_clock_instance = self.MidiClockImpl()
 
-            device_name_to_open = None
-            port_to_open = 0 # Default or index
-
-            if self.MidiClockImpl == RtMidiClock:
-                # rtmidi typically uses port index or full name.
-                # If names are unique, full name is fine. Otherwise, index.
-                # For simplicity, let's try to use the name directly if possible,
-                # or fall back to index if names are not unique or parsing is hard.
-                # The current rtmidi open() takes preferred_name and preferred_port (index).
-                # We'll pass the full name as preferred_name and let open() try to find it or use index 0.
-                # A better way would be to store (name, index) tuples in combobox user data.
-                port_index = self.midi_port_combo.currentIndex()
-                device_name_to_open = selected_port_full_name # rtmidi can often open by name
-                port_to_open = port_index # Pass index as preferred_port
-
-            elif self.MidiClockImpl == AlsaMidiClock:
-                # ALSA needs "client_name_or_id:port_id" or separate name and port_id
-                # Example: "Virtual Raw MIDI (20:0)" -> name="Virtual Raw MIDI", port_id=0, client_id=20
-                # The current midiclock_alsaseq.open() takes (preferred_name, preferred_port)
-                # Let's try to parse it.
-                import re
-                match = re.match(r"^(.*) \((\d+):(\d+)\)$", selected_port_full_name)
-                if match:
-                    device_name_to_open = match.group(1).strip()
-                    # client_id_to_open = int(match.group(2)) # Not directly used by open()
-                    port_to_open = int(match.group(3))
-                else: # Fallback if parsing fails, pass full name
-                    device_name_to_open = selected_port_full_name
-                    port_to_open = 0
-                    logging.warning(f"Could not parse ALSA port string '{selected_port_full_name}', using raw name and port 0.")
+            # Retrieve the open-kwargs stored by populate_midi_ports
+            open_kwargs = self.midi_port_combo.currentData() or {}
+            logging.debug(f"Opening MIDI port '{selected_port_full_name}' with kwargs {open_kwargs}")
 
             try:
-                logging.debug(f"Attempting to open MIDI port: Name='{device_name_to_open}', PortNum/ID='{port_to_open}' using {self.MidiClockImpl.__name__}")
-                self.midi_clock_instance.open(preferred_name=device_name_to_open, preferred_port=port_to_open)
+                self.midi_clock_instance.open(**open_kwargs)
                 self.midi_clock_instance.set_beat_callback(self.beat_received)
                 self.update_midi_clock_source_logic() # Set initial BPM
                 if not self.midi_clock_instance.is_alive(): # Check if thread started (it should by .start())
