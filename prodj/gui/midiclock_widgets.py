@@ -91,13 +91,11 @@ class PlayerTileWidget(QFrame):
         self.update_ui_elements()
 
     def update_data(self, bpm, delay, is_master):
-        self.bpm_label.setText(f"BPM: {bpm:.2f}" if isinstance(bpm, (float, int)) else "BPM: --.--")
-        self.delay_label.setText(f"Delay: {delay * 1000:.2f} ms" if isinstance(delay, (float, int)) else "Delay: --.-- ms")
+        self.bpm_label.setText(f"{bpm:.2f}" if isinstance(bpm, (float, int)) else "--.--")
+        self.delay_label.setText(f"{delay * 1000:.2f} ms" if isinstance(delay, (float, int)) else "--.-- ms")
         self.is_master = is_master
-        # If data is updated, it means it's not dropped (or just reconnected)
-        if self.is_dropped: # Was dropped, now getting data
-             self.is_dropped = False
-             # MainWindow will decide if it was the selected_player_source and needs special handling
+        if self.is_dropped:
+            self.is_dropped = False
         self.update_ui_elements()
 
     def set_dropped_status(self, is_dropped_now):
@@ -106,64 +104,38 @@ class PlayerTileWidget(QFrame):
             self.update_ui_elements()
 
     def update_ui_elements(self):
-        status_parts = []
-        current_style = "PlayerTileWidget { border: 1px solid gray; }" # Default
-        button_text = "Select as Source"
-        button_enabled = True
-
         if self.is_dropped:
-            status_parts.append("Network Drop")
-            button_text = "Source (Reconnect)"
-            current_style = """
-                PlayerTileWidget {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 #1a3a2a, stop:1 #153025);
-                    border: 3px solid #10b981;
-                    border-radius: 16px;
-                    padding: 16px;
-                }
-            """
-            self.bpm_label.setText("BPM: --.--")
-            self.delay_label.setText("Delay: --.-- ms")
+            self.bpm_label.setText("--.--")
+            self.delay_label.setText("--.-- ms")
+            self.status_label.setText("Dropped")
+            self.status_label.setStyleSheet("font-size:8pt; color:#ef4444;")
+            self.action_button.setText("Reconnect")
+            self.setStyleSheet(
+                "QFrame#PlayerFrame { border: 2px solid #ef4444; border-radius:10px; }")
+            return
 
-        else: # Not dropped
-            if self.is_master:
-                status_parts.append("Master")
-                current_style = """
-                    PlayerTileWidget {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 #1a2a3a, stop:1 #152530);
-                        border: 3px solid #0ea5e9;
-                        border-radius: 12px;
-                        padding: 12px;
-                    }
-                """
+        # Build status text
+        status_parts = []
+        if self.is_master:
+            status_parts.append("Master")
+        if self.is_selected_source:
+            status_parts.append("Source")
+        self.status_label.setText("  ".join(status_parts) if status_parts else "")
+        self.status_label.setStyleSheet("font-size:8pt; color:#10b981;"
+                                        if status_parts else "font-size:8pt; color:#6b7280;")
 
-            if self.is_selected_source:
-                status_parts.append("Selected Source")
-                current_style = """
-                    PlayerTileWidget {
-                        background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 #1a3a2a, stop:1 #153025);
-                        border: 3px solid #10b981;
-                        border-radius: 12px;
-                        padding: 16px;
-                }
-            """
-            button_text = "Source Active"
-
-        if not status_parts and not self.is_dropped:
-            self.status_label.setText("Status: Normal")
+        # Border colour: green=selected, blue=master, default
+        if self.is_selected_source:
+            border = "#10b981"
+        elif self.is_master:
+            border = "#0ea5e9"
         else:
-            self.status_label.setText(f"Status: {', '.join(status_parts)}")
+            border = "#3b3b3b"
 
-        self.setStyleSheet(current_style)
-        self.action_button.setText(button_text)
-        self.action_button.setEnabled(button_enabled)
-        self.player_label.setEnabled(button_enabled) # Also enable/disable labels with button
-        self.bpm_label.setEnabled(button_enabled)
-        self.delay_label.setEnabled(button_enabled)
-        self.status_label.setEnabled(button_enabled)
+        self.setStyleSheet(
+            f"QFrame#PlayerFrame {{ border: 2px solid {border}; border-radius:10px; }}")
+
+        self.action_button.setText("Deselect" if self.is_selected_source else "Select")
 
 
 class MidiClockMainWindow(QWidget):
