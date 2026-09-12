@@ -36,43 +36,49 @@ class PlayerTileWidget(QFrame):
 
         self.setFrameStyle(QFrame.NoFrame)
         self.setObjectName("PlayerFrame")
-        self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(100)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(2)
 
+        # Player number + status badge
+        top_row = QHBoxLayout()
         self.player_label = QLabel(f"Player {self.player_number}")
-        self.player_label.setAlignment(Qt.AlignCenter)
         font = self.player_label.font()
         font.setBold(True)
-        font.setPointSize(font.pointSize() + 2)  # Reduced for small screen
+        font.setPointSize(11)
         self.player_label.setFont(font)
-        layout.addWidget(self.player_label)
+        top_row.addWidget(self.player_label)
+        top_row.addStretch()
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("font-size:8pt; color:#6b7280;")
+        top_row.addWidget(self.status_label)
+        layout.addLayout(top_row)
 
-        self.bpm_label = QLabel("BPM: --.--")
+        # Big BPM
+        self.bpm_label = QLabel("--.--")
         bpm_font = self.bpm_label.font()
-        bpm_font.setPointSize(bpm_font.pointSize() + 2)
+        bpm_font.setPointSize(22)
         bpm_font.setBold(True)
         self.bpm_label.setFont(bpm_font)
         self.bpm_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.bpm_label)
-        
-        self.delay_label = QLabel("Delay: --.-- ms")
-        self.delay_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.delay_label)
-        
-        self.status_label = QLabel("Status: Normal")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        status_font = self.status_label.font()
-        status_font.setPointSize(status_font.pointSize() - 2)
-        self.status_label.setFont(status_font)
-        layout.addWidget(self.status_label)
 
-        self.action_button = QPushButton("Source Only")
-        # self.action_button.setCheckable(True) # Not a checkable button anymore, direct action
+        # Delay + select button
+        bot_row = QHBoxLayout()
+        self.delay_label = QLabel("--.-- ms")
+        self.delay_label.setStyleSheet("font-size:8pt; color:#9ca3af;")
+        bot_row.addWidget(self.delay_label)
+        bot_row.addStretch()
+        self.action_button = QPushButton("Select")
+        self.action_button.setFixedSize(80, 32)
         self.action_button.clicked.connect(self.handle_action_clicked)
-        layout.addWidget(self.action_button)
+        bot_row.addWidget(self.action_button)
+        layout.addLayout(bot_row)
 
-        self.update_ui_elements() # Changed from update_style to a more comprehensive update
+        self.update_ui_elements()
 
     def handle_action_clicked(self):
         # If dropped, this button might mean "Try Reconnect" or "Clear Selection"
@@ -332,74 +338,83 @@ class MidiClockMainWindow(QWidget):
         pass
 
     def _init_ui(self):
+        # Target: 1280x720 landscape, reTerminal 5" IPS touchscreen
+        # Row heights: 50 toolbar + 110 players + 530 controls + 30 status = 720
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(6)
 
-        # --- Player Tiles Area ---
-        self.player_grid_layout = QGridLayout()
-        self.player_grid_layout.setAlignment(Qt.AlignTop)
-        main_layout.addLayout(self.player_grid_layout)
+        # ── Toolbar ~50px ──────────────────────────────────────────────────
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(8)
 
-        # --- Global Controls Area ---
-        controls_frame = QFrame()
-        controls_frame.setFrameStyle(QFrame.StyledPanel)
-        controls_layout = QVBoxLayout(controls_frame)
-
-        # Row 1: MIDI Port and Start/Stop
-        row1 = QHBoxLayout()
-        
         self.midi_led = QFrame()
-        self.midi_led.setFrameStyle(QFrame.NoFrame)
-        self.midi_led.setFixedSize(40, 40)
-        self.midi_led.setStyleSheet("""
-            background: #2d2d2d;
-            border: 3px solid #4a4a4a;
-            border-radius: 20px;
-        """)
-        row1.addWidget(self.midi_led)
+        self.midi_led.setFixedSize(34, 34)
+        self.midi_led.setStyleSheet(
+            "background:#2d2d2d;border:2px solid #4a4a4a;border-radius:17px;")
+        toolbar.addWidget(self.midi_led)
 
-        row1.addWidget(QLabel("Port:"))
+        lbl_port = QLabel("MIDI Port:")
+        lbl_port.setStyleSheet("color:#9ca3af;")
+        toolbar.addWidget(lbl_port)
         self.midi_port_combo = QComboBox()
-        row1.addWidget(self.midi_port_combo)
+        self.midi_port_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        toolbar.addWidget(self.midi_port_combo, stretch=3)
 
         self.start_stop_button = QPushButton("Start")
         self.start_stop_button.setCheckable(True)
-        self.start_stop_button.setFixedWidth(100) # Fixed width prevents layout shift
+        self.start_stop_button.setFixedWidth(110)
         self.start_stop_button.clicked.connect(self.toggle_midi_clock_output)
-        row1.addWidget(self.start_stop_button)
-        
+        toolbar.addWidget(self.start_stop_button)
+
         self.settings_button = QPushButton("Settings")
+        self.settings_button.setFixedWidth(110)
         self.settings_button.clicked.connect(self.open_settings_dialog)
-        row1.addWidget(self.settings_button)
+        toolbar.addWidget(self.settings_button)
 
         self.exit_button = QPushButton("Exit")
-        self.exit_button.setStyleSheet("background-color: #7f1d1d; border: 1px solid #991b1b;")
+        self.exit_button.setFixedWidth(80)
+        self.exit_button.setStyleSheet(
+            "background:#7f1d1d;border:1px solid #991b1b;color:white;")
         self.exit_button.clicked.connect(self.close)
-        row1.addWidget(self.exit_button)
+        toolbar.addWidget(self.exit_button)
 
-        row1.addStretch()
-        row1.setSpacing(20) # Add significant spacing between touch targets
-        
-        controls_layout.addLayout(row1)
-        controls_layout.addSpacing(8)
+        main_layout.addLayout(toolbar)
 
-        # ── 2x2 grid of control groups ──────────────────────────────────────
-        grid2 = QGridLayout()
-        grid2.setSpacing(10)
-        grid2.setColumnStretch(0, 1)
-        grid2.setColumnStretch(1, 1)
+        # ── Player strip ~110px (4 tiles side by side) ──────────────────────
+        self.player_grid_layout = QGridLayout()
+        self.player_grid_layout.setSpacing(6)
+        self.player_grid_layout.setAlignment(Qt.AlignTop)
+        # 4 equal columns for players
+        for col in range(4):
+            self.player_grid_layout.setColumnStretch(col, 1)
+        main_layout.addLayout(self.player_grid_layout)
 
-        # ── (0,0) Source Selection ──────────────────────────────────────────
+        # ── Controls area (stretches to fill remaining space) ────────────────
+        controls_frame = QFrame()
+        controls_frame.setFrameStyle(QFrame.NoFrame)
+        controls_layout = QVBoxLayout(controls_frame)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(6)
+
+        # ── 3-column control grid (fills remaining ~530px height) ─────────────
+        ctrl_grid = QGridLayout()
+        ctrl_grid.setSpacing(8)
+        ctrl_grid.setColumnStretch(0, 1)
+        ctrl_grid.setColumnStretch(1, 1)
+        ctrl_grid.setColumnStretch(2, 1)
+
+        # ── Col 0: Clock Source ────────────────────────────────────────────
         source_group = QGroupBox("Clock Source")
         source_layout = QVBoxLayout()
-        source_layout.setSpacing(8)
+        source_layout.setContentsMargins(12, 8, 12, 10)
+        source_layout.setSpacing(10)
 
-        # Follow Master radio
         self.source_master_radio = QRadioButton("Follow Network Master")
         self.source_master_radio.setChecked(True)
         self.source_master_radio.toggled.connect(self._on_source_radio_changed)
         source_layout.addWidget(self.source_master_radio)
 
-        # Manual player radio + combo
         player_row = QHBoxLayout()
         self.source_player_radio = QRadioButton("Lock to Player:")
         self.source_player_radio.toggled.connect(self._on_source_radio_changed)
@@ -407,22 +422,30 @@ class MidiClockMainWindow(QWidget):
         self.source_player_combo = QComboBox()
         self.source_player_combo.addItems(["1", "2", "3", "4"])
         self.source_player_combo.setEnabled(False)
+        self.source_player_combo.setFixedWidth(80)
         self.source_player_combo.currentIndexChanged.connect(self._on_source_player_combo_changed)
         player_row.addWidget(self.source_player_combo)
         player_row.addStretch()
         source_layout.addLayout(player_row)
 
-        # Active source readout
-        self.active_source_label = QLabel("Source: Network Master")
-        self.active_source_label.setStyleSheet("color:#0ea5e9; font-weight:bold;")
+        source_layout.addStretch()
+        self.active_source_label = QLabel("Waiting for CDJs...")
+        self.active_source_label.setStyleSheet(
+            "color:#6b7280; font-weight:bold; padding:6px;"
+            "border:1px solid #374151; border-radius:6px;")
+        self.active_source_label.setWordWrap(True)
         source_layout.addWidget(self.active_source_label)
         source_group.setLayout(source_layout)
-        grid2.addWidget(source_group, 0, 0)
+        ctrl_grid.addWidget(source_group, 0, 0)
 
-        # ── (0,1) Grid Alignment (Phase) ────────────────────────────────────
+        # ── Col 1: Grid Alignment + BPM Control (stacked vertically) ─────────
+        mid_layout = QVBoxLayout()
+        mid_layout.setSpacing(8)
+
         phase_group = QGroupBox("Grid Alignment (Phase)")
         phase_layout = QVBoxLayout()
-        phase_layout.setSpacing(8)
+        phase_layout.setContentsMargins(12, 8, 12, 10)
+        phase_layout.setSpacing(10)
 
         auto_row = QHBoxLayout()
         self.auto_sync_button = QPushButton("Auto Sync: ON")
@@ -435,48 +458,44 @@ class MidiClockMainWindow(QWidget):
         self.auto_sync_button.clicked.connect(self.toggle_auto_sync)
         auto_row.addWidget(self.auto_sync_button)
         self.phase_lock_led = QFrame()
-        self.phase_lock_led.setFixedSize(22, 22)
-        self.phase_lock_led.setStyleSheet("background:#374151;border:2px solid #4b5563;border-radius:11px;")
+        self.phase_lock_led.setFixedSize(26, 26)
+        self.phase_lock_led.setStyleSheet(
+            "background:#374151;border:2px solid #4b5563;border-radius:13px;")
         auto_row.addWidget(self.phase_lock_led)
         self.phase_error_label = QLabel("±0.0 ms")
-        self.phase_error_label.setAlignment(Qt.AlignCenter)
-        phase_err_font = self.phase_error_label.font()
-        phase_err_font.setBold(True)
-        self.phase_error_label.setFont(phase_err_font)
-        self.phase_error_label.setStyleSheet("color:#6b7280;")
+        self.phase_error_label.setStyleSheet("color:#6b7280; font-weight:bold; font-size:12pt;")
         auto_row.addWidget(self.phase_error_label)
         auto_row.addStretch()
         phase_layout.addLayout(auto_row)
 
-        nudge_layout = QHBoxLayout()
+        nudge_row = QHBoxLayout()
+        nudge_row.setSpacing(6)
         self.nudge_minus_button = QPushButton("<< 5ms")
-        self.nudge_minus_button.setFixedHeight(36)
         self.nudge_minus_button.clicked.connect(lambda: self.nudge(-5.0))
-        nudge_layout.addWidget(self.nudge_minus_button)
+        nudge_row.addWidget(self.nudge_minus_button)
         self.nudge_plus_button = QPushButton("5ms >>")
-        self.nudge_plus_button.setFixedHeight(36)
         self.nudge_plus_button.clicked.connect(lambda: self.nudge(5.0))
-        nudge_layout.addWidget(self.nudge_plus_button)
+        nudge_row.addWidget(self.nudge_plus_button)
         self.sync_button = QPushButton("Force Sync")
-        self.sync_button.setFixedHeight(36)
         self.sync_button.setStyleSheet("border: 1px solid #3b82f6;")
         self.sync_button.clicked.connect(self.sync_to_grid)
-        nudge_layout.addWidget(self.sync_button)
-        phase_layout.addLayout(nudge_layout)
+        nudge_row.addWidget(self.sync_button)
+        phase_layout.addLayout(nudge_row)
         phase_group.setLayout(phase_layout)
-        grid2.addWidget(phase_group, 0, 1)
+        mid_layout.addWidget(phase_group)
 
-        # ── (1,0) BPM Control ───────────────────────────────────────────────
         manual_group = QGroupBox("BPM Control")
         manual_layout = QVBoxLayout()
-        manual_layout.setSpacing(8)
+        manual_layout.setContentsMargins(12, 8, 12, 10)
+        manual_layout.setSpacing(10)
 
         manual_top = QHBoxLayout()
+        manual_top.setSpacing(8)
         self.manual_mode_button = QPushButton("Manual BPM")
         self.manual_mode_button.setCheckable(True)
         self.manual_mode_button.clicked.connect(self.toggle_manual_bpm_mode)
         manual_top.addWidget(self.manual_mode_button)
-        self.tap_tempo_button = QPushButton("Tap")
+        self.tap_tempo_button = QPushButton("Tap Tempo")
         self.tap_tempo_button.clicked.connect(self.handle_tap_tempo_clicked)
         self.tap_tempo_button.setEnabled(False)
         manual_top.addWidget(self.tap_tempo_button)
@@ -486,68 +505,76 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_slider = QSlider(Qt.Horizontal)
         self.manual_bpm_slider.setRange(300, 3000)
         self.manual_bpm_slider.setValue(1200)
-        self.manual_bpm_slider.setFixedHeight(40)
         self.manual_bpm_slider.valueChanged.connect(self.manual_bpm_slider_changed)
         self.manual_bpm_slider.setEnabled(False)
         manual_bottom.addWidget(self.manual_bpm_slider)
         self.manual_bpm_label = QLabel("120.0")
-        self.manual_bpm_label.setFixedWidth(55)
+        self.manual_bpm_label.setFixedWidth(65)
         self.manual_bpm_label.setAlignment(Qt.AlignCenter)
         self.manual_bpm_label.setEnabled(False)
         manual_bottom.addWidget(self.manual_bpm_label)
         manual_layout.addLayout(manual_bottom)
         manual_group.setLayout(manual_layout)
-        grid2.addWidget(manual_group, 1, 0)
+        mid_layout.addWidget(manual_group)
 
-        # ── (1,1) Precision Pitch ────────────────────────────────────────────
+        ctrl_grid.addLayout(mid_layout, 0, 1)
+
+        # ── Col 2: Precision Pitch ────────────────────────────────────────
         pitch_group = QGroupBox("Precision Pitch (Speed)")
         pitch_layout = QVBoxLayout()
-        pitch_layout.setSpacing(8)
+        pitch_layout.setContentsMargins(12, 8, 12, 10)
+        pitch_layout.setSpacing(12)
 
         self.pitch_label = QLabel("+0.0 ms")
         pitch_label_font = self.pitch_label.font()
         pitch_label_font.setBold(True)
-        pitch_label_font.setPointSize(14)
+        pitch_label_font.setPointSize(28)
         self.pitch_label.setFont(pitch_label_font)
-        self.pitch_label.setStyleSheet("color: #0ea5e9;")
+        self.pitch_label.setStyleSheet("color:#0ea5e9;")
         self.pitch_label.setAlignment(Qt.AlignCenter)
         pitch_layout.addWidget(self.pitch_label)
 
         pitch_btn_row = QHBoxLayout()
+        pitch_btn_row.setSpacing(8)
         self.pitch_down_button = QPushButton("-")
+        self.pitch_down_button.setMinimumHeight(60)
         self.pitch_down_button.clicked.connect(lambda: self.adjust_precision_pitch(-1))
         pitch_btn_row.addWidget(self.pitch_down_button)
         self.pitch_up_button = QPushButton("+")
+        self.pitch_up_button.setMinimumHeight(60)
         self.pitch_up_button.clicked.connect(lambda: self.adjust_precision_pitch(1))
         pitch_btn_row.addWidget(self.pitch_up_button)
-        reset_button = QPushButton("Reset")
-        reset_button.clicked.connect(self.reset_precision_pitch)
-        pitch_btn_row.addWidget(reset_button)
         pitch_layout.addLayout(pitch_btn_row)
 
-        step_row = QHBoxLayout()
-        step_row.addWidget(QLabel("Step:"))
+        reset_row = QHBoxLayout()
+        reset_button = QPushButton("Reset")
+        reset_button.clicked.connect(self.reset_precision_pitch)
+        reset_row.addWidget(reset_button)
+        lbl_step = QLabel("Step:")
+        lbl_step.setStyleSheet("color:#9ca3af;")
+        reset_row.addWidget(lbl_step)
         self.pitch_amount_spinbox = QDoubleSpinBox()
         self.pitch_amount_spinbox.setRange(0.1, 10.0)
         self.pitch_amount_spinbox.setSingleStep(0.1)
         self.pitch_amount_spinbox.setSuffix(" ms")
         self.pitch_amount_spinbox.setValue(1.0)
-        step_row.addWidget(self.pitch_amount_spinbox)
-        step_row.addStretch()
-        pitch_layout.addLayout(step_row)
+        reset_row.addWidget(self.pitch_amount_spinbox)
+        pitch_layout.addLayout(reset_row)
+
+        pitch_layout.addStretch()
         pitch_group.setLayout(pitch_layout)
-        grid2.addWidget(pitch_group, 1, 1)
+        ctrl_grid.addWidget(pitch_group, 0, 2)
 
-        controls_layout.addLayout(grid2)
+        controls_layout.addLayout(ctrl_grid, stretch=1)
 
-        # ── Status bar ───────────────────────────────────────────────────────
+        # ── Status bar ~28px ────────────────────────────────────────────
         self.global_status_label = QLabel("MIDI Clock: Stopped")
-        self.global_status_label.setWordWrap(True)
+        self.global_status_label.setWordWrap(False)
+        self.global_status_label.setStyleSheet("color:#6b7280; padding:2px 4px;")
         controls_layout.addWidget(self.global_status_label)
-        controls_layout.addStretch()
 
-        main_layout.addWidget(controls_frame)
-        self.setMinimumSize(800, 520)
+        main_layout.addWidget(controls_frame, stretch=1)
+        self.setFixedSize(1280, 720)
 
 
     def _connect_signals(self):

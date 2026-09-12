@@ -41,21 +41,22 @@ class MidiClockApp:
         logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
 
         self.app = QApplication(sys.argv)
+        # Target: 1280x720 landscape (reTerminal 5" IPS), finger-friendly (>=44px targets)
         self.app.setStyleSheet("""
             QWidget {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1a1a1a, stop:1 #2a2a2a);
+                    stop:0 #1a1a1a, stop:1 #242424);
                 color: #e5e7eb;
-                font-family: "Segoe UI", "San Francisco", "Helvetica Neue", Arial, sans-serif;
-                font-size: 14pt;
+                font-family: "Segoe UI", "San Francisco", Arial, sans-serif;
+                font-size: 11pt;
             }
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #3b3b3b, stop:1 #2d2d2d);
                 border: 1px solid #4a4a4a;
-                padding: 10px;
-                min-height: 50px;
-                border-radius: 8px;
+                padding: 6px 10px;
+                min-height: 36px;
+                border-radius: 6px;
                 color: #e5e7eb;
                 font-weight: 600;
             }
@@ -71,121 +72,104 @@ class MidiClockApp:
                 border: 1px solid #0284c7;
             }
             QPushButton:disabled {
-                background: #2a2a2a;
-                color: #6b7280;
+                background: #242424;
+                color: #4b5563;
                 border: 1px solid #374151;
             }
             QLabel {
                 background-color: transparent;
-                padding: 4px;
+                padding: 1px;
                 color: #e5e7eb;
             }
             QComboBox {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3b3b3b, stop:1 #2d2d2d);
+                background: #2d2d2d;
                 border: 1px solid #4a4a4a;
-                padding: 8px;
-                min-height: 50px;
-                border-radius: 8px;
+                padding: 4px 8px;
+                min-height: 36px;
+                border-radius: 6px;
                 color: #e5e7eb;
             }
-            QComboBox:hover {
-                border: 1px solid #0ea5e9;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 45px;
-            }
+            QComboBox:hover { border: 1px solid #0ea5e9; }
+            QComboBox::drop-down { border: none; width: 28px; }
             QComboBox::down-arrow {
                 image: none;
-                border-left: 8px solid transparent;
-                border-right: 8px solid transparent;
-                border-top: 8px solid #e5e7eb;
-                margin-right: 15px;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #e5e7eb;
+                margin-right: 8px;
             }
             QComboBox QAbstractItemView {
                 background-color: #2d2d2d;
                 border: 1px solid #0ea5e9;
                 selection-background-color: #0ea5e9;
                 color: #e5e7eb;
-                outline: none;
             }
             QSlider::groove:horizontal {
                 border: 1px solid #4a4a4a;
-                height: 20px;
+                height: 14px;
                 background: #2d2d2d;
-                margin: 4px 0;
-                border-radius: 10px;
+                margin: 2px 0;
+                border-radius: 7px;
             }
             QSlider::handle:horizontal {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #0ea5e9, stop:1 #0284c7);
                 border: 2px solid #0369a1;
-                width: 40px;
-                height: 40px;
-                margin: -12px 0;
-                border-radius: 20px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #38bdf8, stop:1 #0ea5e9);
+                width: 32px;
+                height: 32px;
+                margin: -10px 0;
+                border-radius: 16px;
             }
             QFrame#PlayerFrame {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #2d2d2d, stop:1 #252525);
                 border: 2px solid #3b3b3b;
-                border-radius: 16px;
-                padding: 12px;
+                border-radius: 10px;
+                padding: 6px;
             }
             QGroupBox {
                 font-weight: 600;
-                border: 2px solid #3b3b3b;
+                border: 1px solid #3b3b3b;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2d2d2d, stop:1 #252525);
-                margin-top: 25px;
-                padding-top: 25px;
-                border-radius: 12px;
+                    stop:0 #262626, stop:1 #202020);
+                margin-top: 18px;
+                padding-top: 16px;
+                border-radius: 8px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                padding: 0 10px 0 10px;
-                left: 15px;
+                padding: 0 6px;
+                left: 10px;
                 color: #0ea5e9;
-                font-size: 11pt;
+                font-size: 9pt;
+                font-weight: 700;
             }
             QRadioButton {
-                spacing: 12px;
-                padding: 8px;
+                spacing: 8px;
+                padding: 4px;
                 color: #e5e7eb;
             }
             QRadioButton::indicator {
-                width: 30px;
-                height: 30px;
+                width: 20px;
+                height: 20px;
             }
             QDoubleSpinBox {
                 background: #2d2d2d;
                 border: 1px solid #4a4a4a;
-                border-radius: 8px;
-                padding: 10px;
+                border-radius: 6px;
+                padding: 4px 6px;
+                min-height: 36px;
                 color: #e5e7eb;
-                min-height: 50px;
             }
-            QDoubleSpinBox:hover {
-                border: 1px solid #0ea5e9;
-            }
+            QDoubleSpinBox:hover { border: 1px solid #0ea5e9; }
             QMenu {
                 background-color: #2d2d2d;
                 border: 1px solid #0ea5e9;
                 color: #e5e7eb;
             }
-            QMenu::item {
-                padding: 12px 40px 12px 20px;
-            }
-            QMenu::item:selected {
-                background-color: #0ea5e9;
-                color: white;
-            }
+            QMenu::item { padding: 8px 32px 8px 16px; }
+            QMenu::item:selected { background-color: #0ea5e9; color: white; }
         """)
         self.prodj = ProDj(iface=self.args.iface)
         self.signal_bridge = SignalBridge()
