@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import socket
+import sys
 import time
 from construct import Aligned, GreedyBytes
 from threading import Thread
@@ -13,7 +14,12 @@ from .nfsdownload import NfsDownload, generic_file_download_done_callback
 class NfsClient:
   def __init__(self, prodj):
     self.prodj = prodj
-    self.loop = asyncio.new_event_loop()
+    # IocpProactor (Windows default) does not support add_reader().
+    # Force SelectorEventLoop on Windows so UDP socket reads work.
+    if sys.platform == 'win32':
+      self.loop = asyncio.SelectorEventLoop()
+    else:
+      self.loop = asyncio.new_event_loop()
     self.receiver = RpcReceiver()
 
     self.rpc_auth_stamp = 0xdeadbeef

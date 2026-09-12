@@ -199,8 +199,8 @@ class MidiClockMainWindow(QWidget):
         # This is called from MIDI clock thread, so we need to use a signal
         # to communicate with the GUI thread
         self.signal_bridge.beat_signal.emit()
-    
-        def _on_beat_signal(self):
+
+    def _on_beat_signal(self):
         # This runs in the GUI thread - triggered by MIDI clock output tick
             self.midi_led.setStyleSheet("""
             background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
@@ -208,7 +208,7 @@ class MidiClockMainWindow(QWidget):
             border: 3px solid #10b981;
             border-radius: 20px;
         """)
-        QTimer.singleShot(100, lambda: self.midi_led.setStyleSheet("""
+            QTimer.singleShot(100, lambda: self.midi_led.setStyleSheet("""
             background: #2d2d2d;
             border: 3px solid #4a4a4a;
             border-radius: 20px;
