@@ -65,6 +65,7 @@ class MidiClock(Thread):
     super().__init__(daemon=True)
     self.keep_running = True
     self.delay = 1.0           # seconds per MIDI tick (set via setBpm)
+    self._delay_changed = False  # flag: deadline must be re-anchored
     self.midiout = None        # created in open() — no handle held before use
     self.beat_callback = None
     self._phase_offset_s = 0.0  # one-shot phase nudge in seconds
@@ -99,11 +100,21 @@ class MidiClock(Thread):
     self.beat_callback = callback
 
   def _sleep_until(self, deadline):
-    """Sleep until deadline (perf_counter seconds), using sleep+busywait."""
-    remaining = deadline - time.perf_counter()
-    if remaining > _BUSYWAIT_GUARD_S:
-      time.sleep(remaining - _BUSYWAIT_GUARD_S)
-    # busy-wait the last guard interval for precision
+    """Sleep until deadline (perf_counter seconds), using sleep+busywait.
+    Wakes early if _delay_changed is set so a BPM change takes effect
+    on the very next tick instead of waiting out the current sleep."""
+    while True:
+      now = time.perf_counter()
+      remaining = deadline - now
+      if remaining <= _BUSYWAIT_GUARD_S:
+        break
+      if self._delay_changed:
+        # BPM changed mid-sleep — wake up immediately
+        return
+      # Sleep in chunks of max 10ms so we notice a BPM change quickly
+      chunk = min(remaining - _BUSYWAIT_GUARD_S, 0.010)
+      time.sleep(chunk)
+    # Final busy-wait for precision
     while time.perf_counter() < deadline:
       pass
 
@@ -128,8 +139,15 @@ class MidiClock(Thread):
         self.beat_callback()
       beat_count += 1
 
-      # Advance deadline by one tick period, then apply any pending phase nudge
-      next_deadline += self.delay
+            # Re-anchor deadline when BPM changed — avoids burst of catch-up ticks
+      # and ensures the new tempo takes effect on the very next tick.
+      if self._delay_changed:
+        self._delay_changed = False
+        next_deadline = time.perf_counter() + self.delay
+      else:
+        next_deadline += self.delay
+
+      # Apply any pending phase nudge
       phase = self._phase_offset_s
       if phase != 0.0:
         next_deadline += phase
@@ -146,9 +164,12 @@ class MidiClock(Thread):
     if bpm <= 0:
       logging.warning("Ignoring zero or negative BPM")
       return
-    self.delay = (60.0 / bpm / 24.0) - (pitch_offset / 1000.0)
-    if self.delay < 0:
-      self.delay = 0.0
+    new_delay = (60.0 / bpm / 24.0) - (pitch_offset / 1000.0)
+    if new_delay < 0:
+      new_delay = 0.0
+    if new_delay != self.delay:
+      self.delay = new_delay
+      self._delay_changed = True  # signal loop to re-anchor deadline
     logging.info("rtmidi: BPM=%.2f pitch_offset=%.2fms tick_delay=%.6fs",
                  bpm, pitch_offset, self.delay)
 

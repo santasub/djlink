@@ -999,13 +999,20 @@ class MidiClockMainWindow(QWidget):
         self.update_global_status_label()
 
     def manual_bpm_slider_changed(self, value):
-        self.manual_bpm_value = value / 10.0
-        self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
+        new_bpm = value / 10.0
+        self.manual_bpm_label.setText(f"{new_bpm:.1f} BPM")
         self.tap_timestamps = []
-        # Auto-activate manual mode when user moves the slider
+        # Auto-activate manual mode when user moves the slider.
+        # Block signals on the slider while activating so toggle_manual_bpm_mode
+        # cannot reset the slider value and overwrite what the user just set.
         if not self.manual_bpm_mode_active:
+            self.manual_bpm_slider.blockSignals(True)
             self.manual_mode_button.setChecked(True)
-            self.toggle_manual_bpm_mode()
+            self.toggle_manual_bpm_mode()   # may call slider.setValue internally
+            self.manual_bpm_slider.blockSignals(False)
+        # Now apply the user's intended value
+        self.manual_bpm_value = new_bpm
+        self.manual_bpm_label.setText(f"{new_bpm:.1f} BPM")
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
             self.update_global_status_label()
