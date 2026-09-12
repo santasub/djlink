@@ -1,25 +1,54 @@
 import logging
-import sys # Moved to be among the first imports
+import sys
+import time
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
-                             QMessageBox, QDoubleSpinBox) # Added QDoubleSpinBox and QMessageBox
+                             QMessageBox, QDoubleSpinBox)
 from qtpy.QtCore import Qt, Signal, QTimer
 
 # MIDI Clock imports
 from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock, list_ports as rtmidi_list_ports
 AlsaMidiClock = None
-if sys.platform.startswith('linux'): # Now sys is defined
+if sys.platform.startswith('linux'):
     try:
         from prodj.midi.midiclock_alsaseq import MidiClock as AlsaMidiClock
     except ImportError:
-        logging.warning("AlsaMidiClock not available on this Linux system (alsaseq library missing). Falling back to rtmidi.")
-        AlsaMidiClock = None # Explicitly set to None if import fails
-
-import time # For Tap Tempo (sys import was here, now removed as it's at top)
+        logging.warning(
+            "AlsaMidiClock not available (alsaseq missing). Falling back to rtmidi."
+        )
+        AlsaMidiClock = None
 
 MAX_TAPS_FOR_AVG = 4
 TAP_TIMEOUT_SECONDS = 2.0
+
+# Maximum number of phase-error history entries shown in the metrics sparkline
+_SPARKLINE_LEN = 4
+
+# ── Shared LED / indicator colour tokens ──────────────────────────────────────
+# Used by: phase lock LED, track state LED, radio button ::indicator QSS,
+#          phase error label, status bar dot.
+_LED_GREEN        = "#10b981"   # locked / playing
+_LED_GREEN_BORDER = "#059669"
+_LED_AMBER        = "#f59e0b"   # drift / paused
+_LED_AMBER_BORDER = "#d97706"
+_LED_RED          = "#ef4444"   # large error
+_LED_RED_BORDER   = "#dc2626"
+_LED_OFF          = "#374151"   # inactive
+_LED_OFF_BORDER   = "#4b5563"
+
+
+def _short_port_name(full_name: str) -> str:
+    """Return a human-readable short name for a MIDI port string.
+
+    On Windows, rtmidi returns names like 'CH345:CH345 MIDI 1 28:0'.
+    We strip everything from the first ':' onward so the combo box shows
+    only the device label (e.g. 'CH345').  On Linux/macOS the name is
+    already short, so we return it unchanged.
+    """
+    if ':' in full_name:
+        return full_name.split(':', 1)[0].strip()
+    return full_name
 
 class PlayerTileWidget(QFrame):
     """
@@ -39,44 +68,49 @@ class PlayerTileWidget(QFrame):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setFixedHeight(100)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(2)
+        # Grid: col 0 expands, col 1 is fixed-width button column
+        grid = QGridLayout(self)
+        grid.setContentsMargins(10, 8, 10, 8)
+        grid.setSpacing(4)
+        grid.setColumnStretch(0, 1)   # left content expands
+        grid.setColumnStretch(1, 0)   # button column fixed
 
-        # Player number + status badge
-        top_row = QHBoxLayout()
+        # Row 0: player name (col 0) + status badge (col 0, right-aligned)
+        header = QHBoxLayout()
+        header.setSpacing(6)
         self.player_label = QLabel(f"Player {self.player_number}")
         font = self.player_label.font()
         font.setBold(True)
         font.setPointSize(11)
         self.player_label.setFont(font)
-        top_row.addWidget(self.player_label)
-        top_row.addStretch()
+        header.addWidget(self.player_label)
+        header.addStretch()
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("font-size:8pt; color:#6b7280;")
-        top_row.addWidget(self.status_label)
-        layout.addLayout(top_row)
+        self.status_label.setStyleSheet("font-size:9pt; color:#6b7280;")
+        header.addWidget(self.status_label)
+        grid.addLayout(header, 0, 0)
 
-        # Big BPM
+        # Row 1: BPM — left column only, vertically centred
         self.bpm_label = QLabel("--.--")
         bpm_font = self.bpm_label.font()
-        bpm_font.setPointSize(22)
+        bpm_font.setPointSize(20)
         bpm_font.setBold(True)
         self.bpm_label.setFont(bpm_font)
         self.bpm_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.bpm_label)
+        grid.addWidget(self.bpm_label, 1, 0)
 
-        # Delay + select button
-        bot_row = QHBoxLayout()
+        # Row 2: delay label — left column only
         self.delay_label = QLabel("--.-- ms")
-        self.delay_label.setStyleSheet("font-size:8pt; color:#9ca3af;")
-        bot_row.addWidget(self.delay_label)
-        bot_row.addStretch()
+        self.delay_label.setStyleSheet("font-size:9pt; color:#9ca3af;")
+        grid.addWidget(self.delay_label, 2, 0)
+
+        # Button: right column, spans all 3 rows — always contained inside frame
         self.action_button = QPushButton("Select")
-        self.action_button.setFixedSize(80, 32)
+        self.action_button.setFixedWidth(72)
+        self.action_button.setMinimumHeight(60)
+        self.action_button.setCursor(Qt.PointingHandCursor)
         self.action_button.clicked.connect(self.handle_action_clicked)
-        bot_row.addWidget(self.action_button)
-        layout.addLayout(bot_row)
+        grid.addWidget(self.action_button, 0, 1, 3, 1)  # row 0, col 1, rowspan 3
 
         self.update_ui_elements()
 
@@ -95,8 +129,9 @@ class PlayerTileWidget(QFrame):
         self.delay_label.setText(f"{delay * 1000:.2f} ms" if isinstance(delay, (float, int)) else "--.-- ms")
         self.is_master = is_master
         if self.is_dropped:
-            self.is_dropped = False
-        self.update_ui_elements()
+            self.set_dropped_status(False)  # use the guarded setter to avoid redundant repaints
+        else:
+            self.update_ui_elements()
 
     def set_dropped_status(self, is_dropped_now):
         if self.is_dropped != is_dropped_now:
@@ -121,8 +156,8 @@ class PlayerTileWidget(QFrame):
         if self.is_selected_source:
             status_parts.append("Source")
         self.status_label.setText("  ".join(status_parts) if status_parts else "")
-        self.status_label.setStyleSheet("font-size:8pt; color:#10b981;"
-                                        if status_parts else "font-size:8pt; color:#6b7280;")
+        self.status_label.setStyleSheet("font-size:9pt; color:#10b981;"
+                                        if status_parts else "font-size:9pt; color:#6b7280;")
 
         # Border colour: green=selected, blue=master, default
         if self.is_selected_source:
@@ -161,17 +196,25 @@ class MidiClockMainWindow(QWidget):
         self.phase_error_history = []      # rolling history for smoothing
         self.PHASE_HISTORY_LEN = 4
 
-        self.midi_clock_instance = None # Will hold AlsaMidiClock or RtMidiClock instance
-        self.preferred_midi_backend = None # "ALSA" or "rtmidi"
-        self.MidiClockImpl = None # Actual class to use
+        self.midi_clock_instance = None  # AlsaMidiClock or RtMidiClock
+        self.preferred_midi_backend = None  # "ALSA" or "rtmidi"
+        self.MidiClockImpl = None
+
+        # Phase-error sparkline history (shown in metrics panel)
+        self._sparkline: list[float] = []
+
+        # Beat counter from CDJ (bar position)
+        self._last_beat_number: int = 0
+        self._last_beat_player: int = 0
 
         self.setWindowTitle("ProDJ Link MIDI Clock")
         self._init_ui()
         self._connect_signals()
 
-        self.populate_midi_ports() # Populate MIDI ports after UI is created
-        self.update_player_display() # Initial population
-        self.update_global_status_label() # Initial status
+        self.populate_midi_ports()
+        self.update_player_display()
+        self.update_global_status_label()
+        self._refresh_track_info()
 
     def beat_received(self):
         # This is called from MIDI clock thread, so we need to use a signal
@@ -179,18 +222,16 @@ class MidiClockMainWindow(QWidget):
         self.signal_bridge.beat_signal.emit()
 
     def _on_beat_signal(self):
-        # This runs in the GUI thread - triggered by MIDI clock output tick
-            self.midi_led.setStyleSheet("""
-            background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
-                fx:0.5, fy:0.5, stop:0 #10b981, stop:1 #059669);
-            border: 3px solid #10b981;
-            border-radius: 20px;
-        """)
-            QTimer.singleShot(100, lambda: self.midi_led.setStyleSheet("""
-            background: #2d2d2d;
-            border: 3px solid #4a4a4a;
-            border-radius: 20px;
-        """))
+        """Runs in the GUI thread — triggered by MIDI clock output beat."""
+        self.midi_led.setStyleSheet(
+            "background:qradialgradient(cx:0.5,cy:0.5,radius:0.5,"
+            "fx:0.5,fy:0.5,stop:0 #10b981,stop:1 #059669);"
+            "border:3px solid #10b981;border-radius:20px;"
+        )
+        QTimer.singleShot(100, lambda: self.midi_led.setStyleSheet(
+            "background:#2d2d2d;border:3px solid #4a4a4a;border-radius:20px;"
+        ))
+        self._refresh_metrics()
 
     def adjust_precision_pitch(self, direction):
         amount = self.pitch_amount_spinbox.value()
@@ -200,11 +241,11 @@ class MidiClockMainWindow(QWidget):
     
     def reset_precision_pitch(self):
         self.precision_pitch_offset = 0.0
-        self.pitch_label.setText("Pitch: 0.0 ms")
+        self.pitch_label.setText("Pitch: +0.0 ms")
         self.update_midi_clock_source_logic()
 
     def _on_source_radio_changed(self):
-        """Called when the Clock Source radio buttons change."""
+        """Called when the Clock Source radio buttons change (checked side only)."""
         if self.source_master_radio.isChecked():
             self.source_player_combo.setEnabled(False)
             self.selected_player_source = None
@@ -213,8 +254,9 @@ class MidiClockMainWindow(QWidget):
             self.source_player_combo.setEnabled(True)
             player_num = int(self.source_player_combo.currentText())
             self.selected_player_source = player_num
-            logging.info(f"Source: Locked to Player {player_num}")
+            logging.info("Source: Locked to Player %d", player_num)
         self.phase_error_history.clear()
+        self._sparkline.clear()
         self.update_midi_clock_source_logic()
         self._update_active_source_label()
 
@@ -253,11 +295,15 @@ class MidiClockMainWindow(QWidget):
         if self.auto_phase_correction_enabled:
             self.auto_sync_button.setText("Auto Sync: ON")
             self.phase_error_history.clear()
+            self._sparkline.clear()
             logging.info("Auto phase correction enabled.")
         else:
             self.auto_sync_button.setText("Auto Sync: OFF")
             self.phase_error_ms = 0.0
+            self.phase_error_history.clear()
+            self._sparkline.clear()
             self._update_phase_error_display()
+            self._refresh_metrics()
             logging.info("Auto phase correction disabled.")
 
     def _update_phase_error_display(self):
@@ -266,64 +312,255 @@ class MidiClockMainWindow(QWidget):
         self.phase_error_label.setText(f"{err:+.1f} ms")
 
         abs_err = abs(err)
-        if abs_err < 1.0:       # tight lock — green
-            color = "#10b981"
-            border = "#059669"
-            text_color = "#10b981"
-        elif abs_err < 5.0:     # slight drift — yellow
-            color = "#f59e0b"
-            border = "#d97706"
-            text_color = "#f59e0b"
-        else:                   # large error — red
-            color = "#ef4444"
-            border = "#dc2626"
-            text_color = "#ef4444"
+        if abs_err < 1.0:
+            color, border = _LED_GREEN, _LED_GREEN_BORDER
+        elif abs_err < 5.0:
+            color, border = _LED_AMBER, _LED_AMBER_BORDER
+        else:
+            color, border = _LED_RED, _LED_RED_BORDER
 
         self.phase_lock_led.setStyleSheet(
             f"background:{color};border:2px solid {border};border-radius:12px;"
         )
-        self.phase_error_label.setStyleSheet(f"color:{text_color};")
+        self.phase_error_label.setStyleSheet(f"color:{color};")
 
-    def nudge(self, ms):
+    # ------------------------------------------------------------------
+    # Track info bar
+    # ------------------------------------------------------------------
+
+    def _refresh_track_info(self) -> None:
+        """Update the track info bar with data from the active source CDJ.
+        Shows the CDJ that is currently the BPM source (master or locked player).
+        Metadata is fetched asynchronously by the core layer; if not yet available
+        we show what we know from the status packet (play_state, key).
+        """
+        src = self._get_active_source_player_number()
+        if src is None:
+            self._set_track_info_empty()
+            return
+
+        client = self.prodj.cl.getClient(src)
+        if client is None:
+            self._set_track_info_empty()
+            return
+
+        # Player badge
+        is_master = "master" in (client.state or [])
+        badge_color = "#0ea5e9" if is_master else "#6b7280"
+        self._track_player_label.setText(f"P{src}")
+        self._track_player_label.setStyleSheet(
+            f"color:{badge_color};font-size:9pt;font-weight:bold;"
+        )
+
+        # Play-state LED
+        play_state = getattr(client, "play_state", "no_track")
+        if play_state == "playing":
+            led_color = _LED_GREEN
+        elif play_state in ("paused", "cued", "cueing"):
+            led_color = _LED_AMBER
+        else:
+            led_color = _LED_OFF
+        self._track_state_led.setStyleSheet(
+            f"background:{led_color};border-radius:5px;"
+        )
+
+        # Metadata (may be None if not yet fetched or non-rekordbox track)
+        meta = getattr(client, "metadata", None)
+        if meta:
+            title  = meta.get("title",  "") or ""
+            artist = meta.get("artist", "") or ""
+            key    = meta.get("key",    "") or ""
+            dur    = meta.get("duration", None)
+        else:
+            # Fall back to status-packet fields only
+            title  = ""
+            artist = ""
+            key    = str(getattr(client, "key", "") or "")
+            dur    = None
+
+        # Show track_number if title is empty (non-rekordbox USB/SD)
+        if not title:
+            track_no = getattr(client, "track_number", None)
+            analyze  = getattr(client, "track_analyze_type", "")
+            if track_no:
+                title = f"Track {track_no}" if analyze != "rekordbox" else "Loading…"
+            else:
+                title = "No track" if play_state == "no_track" else "Unknown"
+
+        self._track_title_label.setText(title)
+        self._track_artist_label.setText(artist)
+
+        # Key: prefer key_shift if set (indicates active Key Sync shift)
+        key_shift = getattr(client, "key_shift", None)
+        if key_shift and str(key_shift) not in ("", "0", "None"):
+            self._track_key_label.setText(f"{key}→{key_shift}")
+        elif key:
+            self._track_key_label.setText(str(key))
+        else:
+            self._track_key_label.setText("")
+
+        # Duration  "m:ss"
+        if dur and isinstance(dur, (int, float)) and dur > 0:
+            mins, secs = divmod(int(dur), 60)
+            self._track_duration_label.setText(f"{mins}:{secs:02d}")
+        else:
+            self._track_duration_label.setText("")
+
+    def _set_track_info_empty(self) -> None:
+        """Reset all track info bar widgets to their idle state."""
+        self._track_player_label.setText("—")
+        self._track_player_label.setStyleSheet("color:#6b7280;font-size:9pt;font-weight:bold;")
+        self._track_state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:5px;")
+        self._track_title_label.setText("No track")
+        self._track_artist_label.setText("")
+        self._track_key_label.setText("")
+        self._track_duration_label.setText("")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def nudge(self, ms: float) -> None:
+        """Apply a one-shot phase nudge of *ms* milliseconds to the running clock.
+        Positive = later, negative = earlier.  No-op when clock is stopped.
+        """
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             if hasattr(self.midi_clock_instance, "adjust_phase"):
                 self.midi_clock_instance.adjust_phase(ms)
             else:
-                logging.warning("MIDI backend does not support phase adjustment (nudge).")
+                logging.warning("MIDI backend does not support phase adjustment.")
 
-    def sync_to_grid(self):
-        # We want to align the NEXT MIDI tick to a ProDJ beat boundary.
-        # This is a bit complex in a distributed system, but a manual "adjust_phase"
-        # of the current offset between MIDI beat and ProDJ beat is a good start.
-        # For now, let's keep it simple: just nudge to align with the *last* known ProDJ beat.
+    def sync_to_grid(self) -> None:
+        """Nudge the MIDI clock so its next beat boundary aligns with the last
+        ProDJ beat timestamp.  Called internally; no UI button exposes this.
+        """
         if self.last_prodj_beat_time is None:
-            QMessageBox.warning(self, "Sync Error", "No ProDJ Link beat received yet. Play a track first.")
+            logging.warning("sync_to_grid: no ProDJ beat received yet.")
             return
-        
-        # Calculate time since last beat
-        elapsed_since_beat = time.time() - self.last_prodj_beat_time
-        # We want the next MIDI 'i % 24' to happen exactly at beat transitions.
-        # This implementation will be refined, but let's start with a basic phase shift.
-        # For a manual sync button, we'll just send a nudge of the current misalignment.
-        # Actually, let's just use a large nudge or a special 'reset grid' command if available.
-        # For now, we'll just allow the user to manual nudge.
-        pass
+        if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
+            return
 
-    def _init_ui(self):
-        # Target: 1280x720 landscape, reTerminal 5" IPS touchscreen
-        # Row heights: 50 toolbar + 110 players + 530 controls + 30 status = 720
+        elapsed_ms = (time.time() - self.last_prodj_beat_time) * 1000.0
+        beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
+        if beat_period_ms <= 0:
+            return
+
+        misalignment = elapsed_ms % beat_period_ms
+        if misalignment > beat_period_ms / 2:
+            nudge_ms = -(beat_period_ms - misalignment)  # nudge earlier
+        else:
+            nudge_ms = -misalignment  # nudge later
+        self.nudge(nudge_ms)
+        logging.info("sync_to_grid: misalignment %.2f ms, nudge %.2f ms",
+                     misalignment, nudge_ms)
+
+    def _output_bpm(self) -> float | None:
+        """Return the BPM the clock is *actually* ticking at, derived from
+        midi_clock_instance.delay, or None when the clock is stopped.
+        """
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            d = self.midi_clock_instance.delay
+            if d > 0:
+                return 60.0 / (d * 24.0)
+        return None
+
+    def _apply_bpm(self, bpm: float) -> None:
+        """Single consolidated call-site for setBpm.  Always includes
+        the current precision_pitch_offset.  Safe to call when clock is
+        stopped (no-op).
+        """
+        if not (self.midi_clock_instance and self.midi_clock_instance.is_alive()):
+            return
+        if bpm <= 0:
+            logging.error("_apply_bpm: invalid BPM %.2f — ignored.", bpm)
+            return
+        self.midi_clock_instance.setBpm(bpm, self.precision_pitch_offset)
+
+    def _refresh_metrics(self) -> None:
+        """Update the live metrics panel widgets.  Called on every MIDI beat,
+        on clock stop, on source change, and whenever manual mode is toggled.
+
+        In manual BPM mode the CDJ-derived rows (BAR.BEAT, PHASE ERR, CDJ DELAY)
+        are shown as — because they carry no meaning when the clock is free-running.
+        """
+        # ── Output BPM ────────────────────────────────────────────────────
+        # Always derived from the actual clock tick rate, regardless of mode.
+        bpm = self._output_bpm()
+        if bpm is not None:
+            self._metrics_bpm_label.setText(f"{bpm:.2f}")
+            self._metrics_bpm_label.setStyleSheet(
+                "color:#10b981;font-weight:bold;font-size:22pt;"
+            )
+        else:
+            self._metrics_bpm_label.setText("---.--")
+            self._metrics_bpm_label.setStyleSheet(
+                "color:#4b5563;font-weight:bold;font-size:22pt;"
+            )
+
+        # Rows below are CDJ-derived — meaningless / stale in manual mode.
+        if self.manual_bpm_mode_active:
+            self._metrics_beat_label.setText("—")
+            self._metrics_beat_label.setStyleSheet(
+                "color:#4b5563;font-weight:bold;font-size:13pt;"
+            )
+            self._metrics_phase_hist_label.setText("—")
+            self._metrics_phase_hist_label.setStyleSheet("color:#4b5563;font-size:9pt;")
+            self._metrics_latency_label.setText("—")
+            self._metrics_latency_label.setStyleSheet("color:#4b5563;font-size:11pt;")
+            return
+
+        # ── Beat / bar position ───────────────────────────────────────────
+        if self._last_beat_number > 0:
+            bar = ((self._last_beat_number - 1) // 4) + 1
+            beat_in_bar = ((self._last_beat_number - 1) % 4) + 1
+            self._metrics_beat_label.setText(f"{bar}.{beat_in_bar}")
+            self._metrics_beat_label.setStyleSheet(
+                "color:#9ca3af;font-weight:bold;font-size:13pt;"
+            )
+        else:
+            self._metrics_beat_label.setText("-.–")
+            self._metrics_beat_label.setStyleSheet(
+                "color:#4b5563;font-weight:bold;font-size:13pt;"
+            )
+
+        # ── Phase error sparkline ─────────────────────────────────────────
+        if self._sparkline:
+            parts = [f"{e:+.1f}" for e in self._sparkline]
+            last = abs(self._sparkline[-1])
+            color = "#10b981" if last < 1.0 else ("#f59e0b" if last < 5.0 else "#ef4444")
+            self._metrics_phase_hist_label.setText("  ".join(parts))
+            self._metrics_phase_hist_label.setStyleSheet(f"color:{color};font-size:9pt;")
+        else:
+            self._metrics_phase_hist_label.setText("—")
+            self._metrics_phase_hist_label.setStyleSheet("color:#4b5563;font-size:9pt;")
+
+        # ── Network latency from active source tile ───────────────────────
+        src = self._get_active_source_player_number()
+        if src is not None:
+            tile = self.player_tiles.get(src)
+            if tile and not tile.is_dropped:
+                self._metrics_latency_label.setText(tile.delay_label.text())
+                self._metrics_latency_label.setStyleSheet("color:#9ca3af;font-size:11pt;")
+                return
+        self._metrics_latency_label.setText("—")
+        self._metrics_latency_label.setStyleSheet("color:#4b5563;font-size:11pt;")
+
+    def _init_ui(self) -> None:
+        # Target: 1280×720 landscape, reTerminal 5" IPS touchscreen
+        # Row heights: 50 toolbar + 110 players + 530 controls + 28 status = 718 (≈720)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(6)
 
-        # ── Toolbar ~50px ──────────────────────────────────────────────────
+        # ── Toolbar ~50px ─────────────────────────────────────────────────
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
 
         self.midi_led = QFrame()
         self.midi_led.setFixedSize(34, 34)
         self.midi_led.setStyleSheet(
-            "background:#2d2d2d;border:2px solid #4a4a4a;border-radius:17px;")
+            "background:#2d2d2d;border:2px solid #4a4a4a;border-radius:17px;"
+        )
         toolbar.addWidget(self.midi_led)
 
         lbl_port = QLabel("MIDI Port:")
@@ -347,55 +584,141 @@ class MidiClockMainWindow(QWidget):
         self.exit_button = QPushButton("Exit")
         self.exit_button.setFixedWidth(80)
         self.exit_button.setStyleSheet(
-            "background:#7f1d1d;border:1px solid #991b1b;color:white;")
+            "background:#7f1d1d;border:1px solid #991b1b;color:white;"
+        )
         self.exit_button.clicked.connect(self.close)
         toolbar.addWidget(self.exit_button)
 
         main_layout.addLayout(toolbar)
 
-        # ── Player strip ~110px (4 tiles side by side) ──────────────────────
+        # ── Player strip ~110px (4 tiles side by side) ────────────────────
         self.player_grid_layout = QGridLayout()
         self.player_grid_layout.setSpacing(6)
         self.player_grid_layout.setAlignment(Qt.AlignTop)
-        # 4 equal columns for players
-        for col in range(4):
-            self.player_grid_layout.setColumnStretch(col, 1)
+        for _col in range(4):
+            self.player_grid_layout.setColumnStretch(_col, 1)
         main_layout.addLayout(self.player_grid_layout)
 
-        # ── Controls area (stretches to fill remaining space) ────────────────
+        # ── Track info bar (master player) ──────────────────────────────
+        track_frame = QFrame()
+        track_frame.setObjectName("TrackFrame")
+        track_frame.setFixedHeight(44)
+        track_frame.setStyleSheet(
+            "QFrame#TrackFrame{"
+            "background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;"
+            "}"
+        )
+        track_bar = QHBoxLayout(track_frame)
+        track_bar.setContentsMargins(12, 0, 12, 0)
+        track_bar.setSpacing(12)
+
+        # Player badge  e.g. "P1 ●"
+        self._track_player_label = QLabel("—")
+        self._track_player_label.setFixedWidth(40)
+        self._track_player_label.setStyleSheet(
+            "color:#6b7280;font-size:9pt;font-weight:bold;"
+        )
+        track_bar.addWidget(self._track_player_label)
+
+        # Play-state dot
+        self._track_state_led = QFrame()
+        self._track_state_led.setFixedSize(10, 10)
+        self._track_state_led.setStyleSheet(
+            f"background:{_LED_OFF};border-radius:5px;"
+        )
+        track_bar.addWidget(self._track_state_led)
+
+        # Title (bold, expands)
+        self._track_title_label = QLabel("No track")
+        self._track_title_label.setStyleSheet(
+            "color:#e5e7eb;font-size:11pt;font-weight:bold;"
+        )
+        self._track_title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._track_title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        track_bar.addWidget(self._track_title_label, stretch=3)
+
+        # Separator
+        sep1 = QLabel("—")
+        sep1.setStyleSheet("color:#374151;")
+        track_bar.addWidget(sep1)
+
+        # Artist
+        self._track_artist_label = QLabel("")
+        self._track_artist_label.setStyleSheet(
+            "color:#9ca3af;font-size:10pt;"
+        )
+        self._track_artist_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._track_artist_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        track_bar.addWidget(self._track_artist_label, stretch=2)
+
+        # Separator
+        sep2 = QLabel("—")
+        sep2.setStyleSheet("color:#374151;")
+        track_bar.addWidget(sep2)
+
+        # Key
+        self._track_key_label = QLabel("")
+        self._track_key_label.setFixedWidth(52)
+        self._track_key_label.setStyleSheet(
+            "color:#a78bfa;font-size:10pt;font-weight:bold;"
+        )
+        self._track_key_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        track_bar.addWidget(self._track_key_label)
+
+        # Duration  e.g. "5:32"
+        self._track_duration_label = QLabel("")
+        self._track_duration_label.setFixedWidth(44)
+        self._track_duration_label.setStyleSheet(
+            "color:#6b7280;font-size:9pt;"
+        )
+        self._track_duration_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        track_bar.addWidget(self._track_duration_label)
+
+        main_layout.addWidget(track_frame)
+
+        # ── Controls area (fills remaining ~530px) ────────────────────────
         controls_frame = QFrame()
         controls_frame.setFrameStyle(QFrame.NoFrame)
         controls_layout = QVBoxLayout(controls_frame)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(6)
 
-        # ── 3-column control grid (fills remaining ~530px height) ─────────────
+        # 3-column control grid
         ctrl_grid = QGridLayout()
         ctrl_grid.setSpacing(8)
         ctrl_grid.setColumnStretch(0, 1)
         ctrl_grid.setColumnStretch(1, 1)
         ctrl_grid.setColumnStretch(2, 1)
 
-        # ── Col 0: Clock Source ────────────────────────────────────────────
+        # ── Col 0: Clock Source ───────────────────────────────────────────
         source_group = QGroupBox("Clock Source")
         source_layout = QVBoxLayout()
         source_layout.setContentsMargins(12, 8, 12, 10)
         source_layout.setSpacing(10)
 
+        # Fix 2f: only fire _on_source_radio_changed when the radio becomes
+        # *checked* (not on uncheck), avoiding the double-fire that occurs
+        # because toggling one radio unchecks the other.
         self.source_master_radio = QRadioButton("Follow Network Master")
         self.source_master_radio.setChecked(True)
-        self.source_master_radio.toggled.connect(self._on_source_radio_changed)
+        self.source_master_radio.toggled.connect(
+            lambda checked: checked and self._on_source_radio_changed()
+        )
         source_layout.addWidget(self.source_master_radio)
 
         player_row = QHBoxLayout()
         self.source_player_radio = QRadioButton("Lock to Player:")
-        self.source_player_radio.toggled.connect(self._on_source_radio_changed)
+        self.source_player_radio.toggled.connect(
+            lambda checked: checked and self._on_source_radio_changed()
+        )
         player_row.addWidget(self.source_player_radio)
         self.source_player_combo = QComboBox()
         self.source_player_combo.addItems(["1", "2", "3", "4"])
         self.source_player_combo.setEnabled(False)
         self.source_player_combo.setFixedWidth(80)
-        self.source_player_combo.currentIndexChanged.connect(self._on_source_player_combo_changed)
+        self.source_player_combo.currentIndexChanged.connect(
+            self._on_source_player_combo_changed
+        )
         player_row.addWidget(self.source_player_combo)
         player_row.addStretch()
         source_layout.addLayout(player_row)
@@ -403,59 +726,111 @@ class MidiClockMainWindow(QWidget):
         source_layout.addStretch()
         self.active_source_label = QLabel("Waiting for CDJs...")
         self.active_source_label.setStyleSheet(
-            "color:#6b7280; font-weight:bold; padding:6px;"
-            "border:1px solid #374151; border-radius:6px;")
+            "color:#6b7280;font-weight:bold;padding:6px;"
+            "border:1px solid #374151;border-radius:6px;"
+        )
         self.active_source_label.setWordWrap(True)
         source_layout.addWidget(self.active_source_label)
         source_group.setLayout(source_layout)
         ctrl_grid.addWidget(source_group, 0, 0)
 
-        # ── Col 1: Grid Alignment + BPM Control (stacked vertically) ─────────
+        # ── Col 1: Grid Alignment + BPM Control (stacked) ────────────────
         mid_layout = QVBoxLayout()
         mid_layout.setSpacing(8)
 
+        # ── Grid Alignment (Phase) ────────────────────────────────────────
         phase_group = QGroupBox("Grid Alignment (Phase)")
         phase_layout = QVBoxLayout()
         phase_layout.setContentsMargins(12, 8, 12, 10)
-        phase_layout.setSpacing(10)
+        phase_layout.setSpacing(8)
 
+        # Row 1: Auto Sync toggle + phase lock LED + ±ms readout
         auto_row = QHBoxLayout()
         self.auto_sync_button = QPushButton("Auto Sync: ON")
         self.auto_sync_button.setCheckable(True)
         self.auto_sync_button.setChecked(True)
+        self.auto_sync_button.setMinimumHeight(44)
         self.auto_sync_button.setStyleSheet(
-            "QPushButton:checked { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-            "stop:0 #065f46,stop:1 #047857); border: 2px solid #10b981; }"
+            "QPushButton:checked{"
+            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "stop:0 #065f46,stop:1 #047857);"
+            "border:2px solid #10b981;}"
         )
         self.auto_sync_button.clicked.connect(self.toggle_auto_sync)
         auto_row.addWidget(self.auto_sync_button)
+
         self.phase_lock_led = QFrame()
         self.phase_lock_led.setFixedSize(26, 26)
         self.phase_lock_led.setStyleSheet(
-            "background:#374151;border:2px solid #4b5563;border-radius:13px;")
+            f"background:{_LED_OFF};border:2px solid {_LED_OFF_BORDER};border-radius:13px;"
+        )
         auto_row.addWidget(self.phase_lock_led)
+
         self.phase_error_label = QLabel("±0.0 ms")
-        self.phase_error_label.setStyleSheet("color:#6b7280; font-weight:bold; font-size:12pt;")
+        self.phase_error_label.setStyleSheet(
+            "color:#6b7280;font-weight:bold;font-size:12pt;"
+        )
         auto_row.addWidget(self.phase_error_label)
         auto_row.addStretch()
         phase_layout.addLayout(auto_row)
 
-        nudge_row = QHBoxLayout()
-        nudge_row.setSpacing(6)
-        self.nudge_minus_button = QPushButton("<< 5ms")
-        self.nudge_minus_button.clicked.connect(lambda: self.nudge(-5.0))
-        nudge_row.addWidget(self.nudge_minus_button)
-        self.nudge_plus_button = QPushButton("5ms >>")
-        self.nudge_plus_button.clicked.connect(lambda: self.nudge(5.0))
-        nudge_row.addWidget(self.nudge_plus_button)
-        self.sync_button = QPushButton("Force Sync")
-        self.sync_button.setStyleSheet("border: 1px solid #3b82f6;")
-        self.sync_button.clicked.connect(self.sync_to_grid)
-        nudge_row.addWidget(self.sync_button)
-        phase_layout.addLayout(nudge_row)
+        # Row 2–5: Live metrics panel (replaces removed nudge/Force Sync row)
+        metrics_frame = QFrame()
+        metrics_frame.setObjectName("MetricsFrame")
+        metrics_frame.setStyleSheet(
+            "QFrame#MetricsFrame{"
+            "background:#1e1e1e;border:1px solid #2d2d2d;border-radius:6px;"
+            "}"
+        )
+        metrics_layout = QGridLayout(metrics_frame)
+        metrics_layout.setContentsMargins(10, 6, 10, 6)
+        metrics_layout.setSpacing(4)
+        metrics_layout.setColumnStretch(1, 1)
+
+        def _mlabel(text: str, style: str = "") -> QLabel:
+            lbl = QLabel(text)
+            lbl.setStyleSheet(style or "color:#6b7280;font-size:9pt;")
+            return lbl
+
+        # Output BPM
+        metrics_layout.addWidget(
+            _mlabel("OUT BPM"), 0, 0, Qt.AlignLeft
+        )
+        self._metrics_bpm_label = QLabel("---.--")
+        self._metrics_bpm_label.setStyleSheet(
+            "color:#4b5563;font-weight:bold;font-size:22pt;"
+        )
+        self._metrics_bpm_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        metrics_layout.addWidget(self._metrics_bpm_label, 0, 1, Qt.AlignRight)
+
+        # Bar.beat position
+        metrics_layout.addWidget(_mlabel("BAR.BEAT"), 1, 0, Qt.AlignLeft)
+        self._metrics_beat_label = QLabel("-.–")
+        self._metrics_beat_label.setStyleSheet(
+            "color:#9ca3af;font-weight:bold;font-size:13pt;"
+        )
+        self._metrics_beat_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        metrics_layout.addWidget(self._metrics_beat_label, 1, 1, Qt.AlignRight)
+
+        # Phase error history (sparkline)
+        metrics_layout.addWidget(_mlabel("PHASE ERR"), 2, 0, Qt.AlignLeft)
+        self._metrics_phase_hist_label = QLabel("—")
+        self._metrics_phase_hist_label.setStyleSheet("color:#4b5563;font-size:9pt;")
+        self._metrics_phase_hist_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        metrics_layout.addWidget(self._metrics_phase_hist_label, 2, 1, Qt.AlignRight)
+
+        # Network latency to active source CDJ
+        metrics_layout.addWidget(_mlabel("CDJ DELAY"), 3, 0, Qt.AlignLeft)
+        self._metrics_latency_label = QLabel("—")
+        self._metrics_latency_label.setStyleSheet("color:#9ca3af;font-size:11pt;")
+        self._metrics_latency_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        metrics_layout.addWidget(self._metrics_latency_label, 3, 1, Qt.AlignRight)
+
+        phase_layout.addWidget(metrics_frame, stretch=1)
         phase_group.setLayout(phase_layout)
         mid_layout.addWidget(phase_group)
 
+        # ── BPM Control ───────────────────────────────────────────────────
         manual_group = QGroupBox("BPM Control")
         manual_layout = QVBoxLayout()
         manual_layout.setContentsMargins(12, 8, 12, 10)
@@ -463,11 +838,15 @@ class MidiClockMainWindow(QWidget):
 
         manual_top = QHBoxLayout()
         manual_top.setSpacing(8)
+        # Two clear states: unchecked = "Manual BPM", checked = "Auto BPM"
         self.manual_mode_button = QPushButton("Manual BPM")
         self.manual_mode_button.setCheckable(True)
+        self.manual_mode_button.setMinimumHeight(44)
         self.manual_mode_button.clicked.connect(self.toggle_manual_bpm_mode)
         manual_top.addWidget(self.manual_mode_button)
+
         self.tap_tempo_button = QPushButton("Tap Tempo")
+        self.tap_tempo_button.setMinimumHeight(44)
         self.tap_tempo_button.clicked.connect(self.handle_tap_tempo_clicked)
         self.tap_tempo_button.setEnabled(False)
         manual_top.addWidget(self.tap_tempo_button)
@@ -498,7 +877,7 @@ class MidiClockMainWindow(QWidget):
         pitch_layout.setContentsMargins(12, 8, 12, 10)
         pitch_layout.setSpacing(12)
 
-        self.pitch_label = QLabel("+0.0 ms")
+        self.pitch_label = QLabel("Pitch: +0.0 ms")
         pitch_label_font = self.pitch_label.font()
         pitch_label_font.setBold(True)
         pitch_label_font.setPointSize(28)
@@ -540,10 +919,10 @@ class MidiClockMainWindow(QWidget):
 
         controls_layout.addLayout(ctrl_grid, stretch=1)
 
-        # ── Status bar ~28px ────────────────────────────────────────────
-        self.global_status_label = QLabel("MIDI Clock: Stopped")
+        # ── Status bar ~28px ──────────────────────────────────────────────
+        self.global_status_label = QLabel("● Stopped")
         self.global_status_label.setWordWrap(False)
-        self.global_status_label.setStyleSheet("color:#6b7280; padding:2px 4px;")
+        self.global_status_label.setStyleSheet("color:#6b7280;padding:2px 4px;")
         controls_layout.addWidget(self.global_status_label)
 
         main_layout.addWidget(controls_frame, stretch=1)
@@ -555,104 +934,81 @@ class MidiClockMainWindow(QWidget):
         self.signal_bridge.beat_signal.connect(self._on_beat_signal)
         self.signal_bridge.prodj_beat_signal.connect(self.handle_prodj_beat)
         self.signal_bridge.prodj_beat_timing_signal.connect(self.handle_prodj_beat_timing)
+        self.signal_bridge.metadata_ready_signal.connect(self._refresh_track_info)
 
     def handle_client_or_master_change(self, player_number_changed=None):
         self.update_player_display()
         self.update_midi_clock_source_logic()
         self._update_active_source_label()
+        self._refresh_metrics()
+        self._refresh_track_info()
 
-    def update_player_display(self):
-        logging.debug("Updating player display in MidiClockMainWindow")
-        active_player_numbers = {client.player_number for client in self.prodj.cl.clients if client.type == "cdj"}
+    def update_player_display(self) -> None:
+        """Rebuild the player tile strip.  Tiles are created once per player
+        and kept (showing 'Dropped') when a CDJ goes offline, so the layout
+        only ever grows — never shrinks mid-session.  Positions are assigned
+        by sorted player number so the order is always 1-2-3-4.
+        """
+        logging.debug("Updating player display")
+        active_numbers = {
+            c.player_number for c in self.prodj.cl.clients if c.type == "cdj"
+        }
 
-        # Update existing tiles and mark dropped ones
-        for player_num, tile in list(self.player_tiles.items()): # Iterate over a copy for safe removal/modification
-            if player_num not in active_player_numbers:
-                if not tile.is_dropped: # Mark as dropped if not already
-                    tile.set_dropped_status(True)
-                    logging.info(f"Player {player_num} marked as dropped.")
-                # Don't remove the tile immediately, keep it to show "Network Drop"
-            else: # Player is active
-                if tile.is_dropped: # Was dropped, now it's active again
-                    tile.set_dropped_status(False)
-                    logging.info(f"Player {player_num} reconnected.")
-                    # User needs to click to re-select if it was the source
+        # Mark disappeared players as dropped
+        for player_num, tile in self.player_tiles.items():
+            if player_num not in active_numbers and not tile.is_dropped:
+                tile.set_dropped_status(True)
+                logging.info("Player %d marked as dropped.", player_num)
+            elif player_num in active_numbers and tile.is_dropped:
+                tile.set_dropped_status(False)
+                logging.info("Player %d reconnected.", player_num)
 
-        # Add new tiles for newly discovered players and update layout
-        row, col = 0, 0
-        # Sort by player number for consistent layout
-        sorted_clients = sorted([c for c in self.prodj.cl.clients if c.type == "cdj"], key=lambda c: c.player_number)
+        # Create tiles for newly seen players and place them in sorted order
+        sorted_clients = sorted(
+            (c for c in self.prodj.cl.clients if c.type == "cdj"),
+            key=lambda c: c.player_number,
+        )
 
-        for client in sorted_clients:
-            if client.player_number not in self.player_tiles:
-                tile = PlayerTileWidget(client.player_number)
+        for grid_col, client in enumerate(sorted_clients):
+            pn = client.player_number
+
+            # Create tile if new
+            if pn not in self.player_tiles:
+                tile = PlayerTileWidget(pn)
                 tile.selected_signal.connect(self.handle_player_tile_selected)
-                self.player_tiles[client.player_number] = tile
-                # Add to layout, ensuring it's not added multiple times if update_player_display is rapid
-                current_item = self.player_grid_layout.itemAtPosition(row, col)
-                if current_item is None or current_item.widget() != tile :
-                    if current_item is not None : # if something else is there, remove it
-                        old_widget = current_item.widget()
-                        self.player_grid_layout.removeWidget(old_widget)
-                        old_widget.deleteLater()
-                    self.player_grid_layout.addWidget(tile, row, col)
+                self.player_tiles[pn] = tile
             else:
-                tile = self.player_tiles[client.player_number]
-                # Ensure it's in the correct grid position if layout changes or widgets are reordered
-                # This is a bit complex; simpler to rebuild if order changes drastically.
-                # For now, assume if it exists, it's in a reasonable place or will be repositioned by this loop.
-                # If tile is not parented to this grid layout, or at wrong pos, re-add
-                if tile.parentWidget() != self or self.player_grid_layout.indexOf(tile) == -1:
-                     self.player_grid_layout.addWidget(tile, row, col)
-                elif self.player_grid_layout.getItemPosition(self.player_grid_layout.indexOf(tile)) != (row,col) :
-                     # It is in the layout but wrong place, remove and re-add
-                     self.player_grid_layout.removeWidget(tile)
-                     self.player_grid_layout.addWidget(tile, row, col)
+                tile = self.player_tiles[pn]
 
+            # Ensure tile is in the correct grid cell (row 0, col = sorted index)
+            idx = self.player_grid_layout.indexOf(tile)
+            if idx == -1:
+                # Not yet in layout
+                self.player_grid_layout.addWidget(tile, 0, grid_col)
+            else:
+                r, c, *_ = self.player_grid_layout.getItemPosition(idx)
+                if r != 0 or c != grid_col:
+                    self.player_grid_layout.removeWidget(tile)
+                    self.player_grid_layout.addWidget(tile, 0, grid_col)
 
-            is_master = "master" in client.state
-            is_selected = (self.selected_player_source == client.player_number)
-
-            delay_value = 0.0
-            effective_bpm_val = None
-            if client.bpm is not None and client.actual_pitch is not None:
-                 try:
-                    # Ensure bpm is treated as float, especially if it could be string like "--.--"
-                    bpm_float = float(client.bpm)
-                    pitch_float = float(client.actual_pitch)
-                    if bpm_float > 0:
-                        effective_bpm_val = bpm_float * pitch_float
-                        if effective_bpm_val > 0:
-                            delay_value = 60.0 / effective_bpm_val / 24.0
-                 except (TypeError, ValueError):
-                    effective_bpm_val = None
-                    delay_value = 0.0
+            # Compute effective BPM and tick delay for this client
+            effective_bpm = self._bpm_from_client(client)
+            delay_value = (
+                60.0 / effective_bpm / 24.0 if effective_bpm and effective_bpm > 0 else 0.0
+            )
 
             tile.update_data(
-                bpm=effective_bpm_val,
+                bpm=effective_bpm,
                 delay=delay_value,
-                is_master=is_master
+                is_master="master" in client.state,
             )
-            tile.set_selected_source(is_selected)
-            if client.player_number in active_player_numbers and tile.is_dropped: # Ensure it's marked not dropped if active
-                tile.set_dropped_status(False)
-
-
-            col += 1
-            if col >= 2: # Max 2 tiles per row
-                col = 0
-                row += 1
-
-        # Clean up any tiles in player_grid_layout that are no longer in self.player_tiles
-        # This can happen if a player is removed entirely.
-        # Not strictly necessary if set_dropped_status handles visual cue for long-gone players.
-        # For a cleaner grid, one might remove widgets not in self.player_tiles.keys()
+            tile.set_selected_source(self.selected_player_source == pn)
 
         self.update_global_status_label()
 
     def handle_player_tile_selected(self, player_number):
         """Tile click now syncs the radio buttons to match the selection."""
-        logging.info(f"Player tile {player_number} clicked.")
+        logging.info("Player tile %d clicked.", player_number)
         # If already selected, go back to master-follow
         if self.selected_player_source == player_number:
             self.source_master_radio.setChecked(True)  # triggers _on_source_radio_changed
@@ -681,7 +1037,7 @@ class MidiClockMainWindow(QWidget):
             logging.error("No suitable MIDI implementation found!")
             self.MidiClockImpl = None
 
-    def populate_midi_ports(self):
+    def populate_midi_ports(self) -> None:
         self.midi_port_combo.clear()
         self._determine_midi_backend()
 
@@ -692,97 +1048,108 @@ class MidiClockMainWindow(QWidget):
             return
 
         try:
-            ports = []  # list of (display_name, open_kwargs)
+            ports: list[tuple[str, dict]] = []  # (display_name, open_kwargs)
             if self.MidiClockImpl == AlsaMidiClock:
-                # ALSA: use a temp instance only to read /proc - no WinMM handles
+                # Enumerate via /proc without holding a WinMM handle
                 tmp = AlsaMidiClock.__new__(AlsaMidiClock)
-                tmp.__init__()  # safe: only opens alsaseq client
+                tmp.__init__()
                 for client_id, name, port_ids in tmp.iter_alsa_seq_clients():
                     for p_id in port_ids:
                         label = f"{name} ({client_id}:{p_id})"
                         ports.append((label, {'preferred_name': name, 'preferred_port': p_id}))
                 del tmp
             elif self.MidiClockImpl == RtMidiClock:
-                # Use the static helper - no MidiOut handle kept open
                 for idx, name in enumerate(rtmidi_list_ports()):
                     ports.append((name, {'preferred_port': idx}))
 
             if ports:
-                for label, kwargs in ports:
-                    # store open-kwargs as UserRole data so toggle_midi_clock_output
-                    # never has to parse the display string
-                    self.midi_port_combo.addItem(label, userData=kwargs)
+                for full_label, kwargs in ports:
+                    # Display the short device name; store full kwargs as UserRole
+                    short = _short_port_name(full_label)
+                    self.midi_port_combo.addItem(short, userData=kwargs)
                 self.midi_port_combo.setEnabled(True)
                 self.start_stop_button.setEnabled(True)
             else:
                 self.midi_port_combo.addItem("No MIDI Ports Found")
                 self.midi_port_combo.setEnabled(False)
                 self.start_stop_button.setEnabled(False)
-        except Exception as e:
-            logging.error(f"Error listing MIDI ports: {e}", exc_info=True)
+        except Exception as exc:
+            logging.error("Error listing MIDI ports: %s", exc, exc_info=True)
             self.midi_port_combo.addItem("Error listing ports")
             self.midi_port_combo.setEnabled(False)
             self.start_stop_button.setEnabled(False)
 
 
-    def toggle_midi_clock_output(self):
-        if self.start_stop_button.isChecked(): # User wants to start
+    def toggle_midi_clock_output(self) -> None:
+        if self.start_stop_button.isChecked():  # user wants to start
             if self.midi_clock_instance is not None and self.midi_clock_instance.is_alive():
-                logging.warning("MIDI clock already running. Stopping first.")
+                logging.warning("MIDI clock already running — stopping first.")
                 self.midi_clock_instance.stop()
                 self.midi_clock_instance = None
 
-            selected_port_full_name = self.midi_port_combo.currentText()
-            if not selected_port_full_name or "No MIDI" in selected_port_full_name or "Error listing" in selected_port_full_name:
+            port_display = self.midi_port_combo.currentText()
+            if not port_display or any(
+                kw in port_display for kw in ("No MIDI", "Error listing")
+            ):
                 logging.warning("No valid MIDI output port selected.")
-                self.start_stop_button.setChecked(False) # Uncheck button
+                self.start_stop_button.setChecked(False)
                 return
 
             if self.MidiClockImpl is None:
-                logging.error("No MIDI implementation available to start clock.")
+                logging.error("No MIDI implementation available.")
                 self.start_stop_button.setChecked(False)
                 return
 
             self.midi_clock_instance = self.MidiClockImpl()
-
-            # Retrieve the open-kwargs stored by populate_midi_ports
             open_kwargs = self.midi_port_combo.currentData() or {}
-            logging.debug(f"Opening MIDI port '{selected_port_full_name}' with kwargs {open_kwargs}")
+            logging.debug("Opening MIDI port '%s' kwargs=%s", port_display, open_kwargs)
 
             try:
                 self.midi_clock_instance.open(**open_kwargs)
                 self.midi_clock_instance.set_beat_callback(self.beat_received)
-                self.update_midi_clock_source_logic() # Set initial BPM
-                if not self.midi_clock_instance.is_alive(): # Check if thread started (it should by .start())
-                    self.midi_clock_instance.start()
-
-                logging.info(f"Starting MIDI clock on port {selected_port_full_name}")
+                # Seed BPM directly before the thread starts — _apply_bpm is a
+                # no-op until is_alive() is True, so we call setBpm explicitly here.
+                seed_bpm = self._resolve_bpm_for_seed()
+                self.midi_clock_instance.setBpm(seed_bpm, self.precision_pitch_offset)
+                self.midi_clock_instance.start()
+                logging.info("MIDI clock started on '%s' at %.2f BPM",
+                             port_display, seed_bpm)
                 self.start_stop_button.setText("Stop")
                 self.midi_port_combo.setEnabled(False)
-            except Exception as e:
-                logging.error(f"Failed to start MIDI clock on {selected_port_full_name}: {e}", exc_info=True)
+                self.update_global_status_label()
+            except Exception as exc:
+                logging.error(
+                    "Failed to start MIDI clock on '%s': %s", port_display, exc,
+                    exc_info=True
+                )
                 self.midi_clock_instance = None
                 self.start_stop_button.setChecked(False)
-        else: # User wants to stop
+        else:  # user wants to stop
             if self.midi_clock_instance and self.midi_clock_instance.is_alive():
                 self.midi_clock_instance.stop()
-                logging.info("Stopping MIDI clock")
+                logging.info("MIDI clock stopped.")
             self.midi_clock_instance = None
             self.start_stop_button.setText("Start")
             self.midi_port_combo.setEnabled(True)
-            # reset phase display when clock stops
+            # Reset phase display
             self.phase_error_ms = 0.0
             self.phase_error_history.clear()
-            self.phase_lock_led.setStyleSheet("background:#374151;border:2px solid #4b5563;border-radius:12px;")
+            self._sparkline.clear()
+            self.phase_lock_led.setStyleSheet(
+                f"background:{_LED_OFF};border:2px solid {_LED_OFF_BORDER};border-radius:12px;"
+            )
             self.phase_error_label.setText("\u00b10.0 ms")
-            self.phase_error_label.setStyleSheet("color:#6b7280;")
+            self.phase_error_label.setStyleSheet(f"color:{_LED_OFF_BORDER};")
+            self._refresh_metrics()
         self.update_global_status_label()
 
-    def handle_prodj_beat(self, player_number, beat_number):
-        # legacy: just track beat time, used by manual sync_to_grid
+    def handle_prodj_beat(self, player_number: int, beat_number: int) -> None:
+        """Track the beat timestamp and bar position for the active source."""
         active_source = self._get_active_source_player_number()
         if player_number == active_source:
             self.last_prodj_beat_time = time.time()
+            self._last_beat_number = beat_number
+            self._last_beat_player = player_number
 
     def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
         """Called on every beat packet from the CDJ with exact next_beat distance in ms.
@@ -833,10 +1200,15 @@ class MidiClockMainWindow(QWidget):
         self.phase_error_ms = smoothed_error_ms
         self.midi_clock_instance.adjust_phase(correction_ms)
 
+        # Update the sparkline history used by the metrics panel
+        self._sparkline.append(round(smoothed_error_ms, 1))
+        if len(self._sparkline) > _SPARKLINE_LEN:
+            self._sparkline.pop(0)
+
         logging.debug(
-            f"Phase correction: next_beat={next_beat_ms:.1f}ms, "
-            f"beat_period={beat_period_ms:.1f}ms, error={smoothed_error_ms:.2f}ms, "
-            f"correction={correction_ms:.2f}ms"
+            "Phase correction: next_beat=%.1f ms, beat_period=%.1f ms, "
+            "error=%.2f ms, correction=%.2f ms",
+            next_beat_ms, beat_period_ms, smoothed_error_ms, correction_ms
         )
 
         # Update phase error display in UI
@@ -856,160 +1228,152 @@ class MidiClockMainWindow(QWidget):
                     return client.player_number
         return None
 
-    def sync_to_grid(self):
-        if self.last_prodj_beat_time is None:
-            QMessageBox.warning(self, "Sync Error", "No ProDJ Link beat received yet. Play a track first.")
-            return
-
-        if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
-            return
-
-        # Simple approach: How long ago was the last beat?
-        # We want to shift the MIDI phase so that Tick 0 aligns with that beat.
-        elapsed_since_beat = (time.time() - self.last_prodj_beat_time) * 1000.0 # ms
-        
-        # We need the current BPM to know the beat period
-        # This is stored in self.midi_clock_instance.delay (but converted to ms)
-        delay_ms = self.midi_clock_instance.delay * 1000.0 # Time per MIDI tick
-        beat_period_ms = delay_ms * 24.0
-        
-        # Misalignment is elapsed_since_beat modulo beat_period
-        misalignment = elapsed_since_beat % beat_period_ms
-        
-        # We want to nudge the MIDI clock SOONER by 'misalignment' ms 
-        # or LATER by 'beat_period - misalignment' ms.
-        # Let's nudge by the smaller amount for faster sync.
-        if misalignment > beat_period_ms / 2:
-            nudge_amount = beat_period_ms - misalignment # Nudge forward (negative phase shift)
-            self.nudge(-nudge_amount)
-        else:
-            nudge_amount = -misalignment # Nudge backward (positive phase shift)
-            self.nudge(nudge_amount)
-
-        logging.info(f"Sync Grid: Misalignment was {misalignment:.2f}ms. Nudging by {nudge_amount:.2f}ms")
-
-    def update_midi_clock_source_logic(self):
+    def update_midi_clock_source_logic(self) -> None:
+        """Resolve the active BPM source and push it to the clock engine.
+        Consolidated single call-site for _apply_bpm.
+        """
         if self.manual_bpm_mode_active:
-            if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
+            self._apply_bpm(self.manual_bpm_value)
             self.update_global_status_label()
             return
 
-        source_player = None
-        source_player_description = "None"
-        final_bpm_to_set = None
-        is_coasting = False
+        final_bpm: float | None = None
 
+        # 1. Try explicitly selected player
         if self.selected_player_source is not None:
             source_player = self.prodj.cl.getClient(self.selected_player_source)
-            if source_player is not None and not self.player_tiles[source_player.player_number].is_dropped: # Check if not dropped
-                if source_player.bpm is not None and source_player.actual_pitch is not None:
-                    try:
-                        current_bpm = float(source_player.bpm)
-                        current_pitch = float(source_player.actual_pitch)
-                        if current_bpm > 0:
-                            final_bpm_to_set = current_bpm * current_pitch
-                            self.last_known_good_bpm = final_bpm_to_set
-                            self.coasting_bpm = None
-                            source_player_description = f"Player {source_player.player_number} (Selected)"
-                    except (TypeError, ValueError):
-                        logging.warning(f"Invalid BPM/pitch for selected player {source_player.player_number}")
-                if final_bpm_to_set is None:
-                    logging.warning(f"Selected Player {source_player.player_number} has no valid BPM currently.")
-            else: # Selected player has disappeared or is marked dropped
-                if source_player is None: # Truly gone from client list
-                    logging.warning(f"Previously selected player {self.selected_player_source} no longer exists.")
-                # If tile is marked dropped, source_player might still be the client object but tile.is_dropped is true
-                # We fall through to master/coasting.
-                # The selected_player_source attribute remains, allowing "reconnect" by user re-selecting tile.
-                pass
+            tile = self.player_tiles.get(self.selected_player_source)
+            if source_player is not None and (tile is None or not tile.is_dropped):
+                final_bpm = self._bpm_from_client(source_player)
+                if final_bpm is not None:
+                    self.last_known_good_bpm = final_bpm
+                    self.coasting_bpm = None
+                else:
+                    logging.warning(
+                        "Selected Player %d has no valid BPM.",
+                        self.selected_player_source
+                    )
+            else:
+                logging.warning(
+                    "Selected Player %d unavailable or dropped.",
+                    self.selected_player_source
+                )
 
-        if final_bpm_to_set is None:
-            network_master_player = None
+        # 2. Fall back to network master
+        if final_bpm is None:
             for client in self.prodj.cl.clients:
-                if client.type == "cdj" and "master" in client.state and \
-                   (client.player_number not in self.player_tiles or not self.player_tiles[client.player_number].is_dropped) : # Ensure master is not dropped
-                    network_master_player = client
-                    break
-
-            if network_master_player:
-                if network_master_player.bpm is not None and network_master_player.actual_pitch is not None:
-                    try:
-                        current_bpm = float(network_master_player.bpm)
-                        current_pitch = float(network_master_player.actual_pitch)
-                        if current_bpm > 0:
-                            final_bpm_to_set = current_bpm * current_pitch
-                            self.last_known_good_bpm = final_bpm_to_set
-                            self.coasting_bpm = None
-                            source_player_description = f"Player {network_master_player.player_number} (Network Master)"
-                    except (TypeError, ValueError):
-                        logging.warning(f"Invalid BPM/pitch for network master {network_master_player.player_number}")
-                if final_bpm_to_set is None:
-                     logging.warning(f"Network Master Player {network_master_player.player_number} has no valid BPM currently.")
+                if client.type != "cdj" or "master" not in client.state:
+                    continue
+                tile = self.player_tiles.get(client.player_number)
+                if tile and tile.is_dropped:
+                    continue
+                final_bpm = self._bpm_from_client(client)
+                if final_bpm is not None:
+                    self.last_known_good_bpm = final_bpm
+                    self.coasting_bpm = None
+                else:
+                    logging.warning(
+                        "Network Master Player %d has no valid BPM.",
+                        client.player_number
+                    )
+                break
             else:
-                logging.info("No specific source and no (active) network master found.")
+                logging.debug("No active network master found.")
 
-        if final_bpm_to_set is None:
-            if self.last_known_good_bpm is not None:
-                final_bpm_to_set = self.last_known_good_bpm
-                self.coasting_bpm = final_bpm_to_set
-                source_player_description = f"Coasting @ {final_bpm_to_set:.2f} BPM (Last Known)"
-                is_coasting = True
-                logging.info(f"No active BPM source. Coasting at {final_bpm_to_set:.2f} BPM.")
+        # 3. Coast on last known good BPM
+        if final_bpm is None:
+            fallback = self.last_known_good_bpm if self.last_known_good_bpm else 120.0
+            self.coasting_bpm = fallback
+            final_bpm = fallback
+            if self.last_known_good_bpm:
+                logging.info("No BPM source — coasting at %.2f BPM.", fallback)
             else:
-                final_bpm_to_set = 120.0
-                self.coasting_bpm = final_bpm_to_set
-                source_player_description = f"Coasting @ {final_bpm_to_set:.2f} BPM (Default)"
-                is_coasting = True
-                logging.warning("No BPM source and no last known good BPM. Defaulting to 120 BPM for coasting.")
+                logging.warning("No BPM source and no history — defaulting to 120 BPM.")
 
-        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-            if final_bpm_to_set is not None and final_bpm_to_set > 0:
-                self.midi_clock_instance.setBpm(final_bpm_to_set, self.precision_pitch_offset)
-            else:
-                logging.error("Attempting to set invalid BPM (None or <=0). Defaulting to 120.")
-                self.midi_clock_instance.setBpm(120, self.precision_pitch_offset)
-
+        self._apply_bpm(final_bpm)
         self.update_global_status_label()
 
+    def _resolve_bpm_for_seed(self) -> float:
+        """Resolve the BPM to use when first starting the clock thread.
+        Mirrors update_midi_clock_source_logic but returns the value instead
+        of pushing it (because the thread is not alive yet).
+        """
+        if self.manual_bpm_mode_active:
+            return self.manual_bpm_value
+        if self.selected_player_source is not None:
+            client = self.prodj.cl.getClient(self.selected_player_source)
+            tile = self.player_tiles.get(self.selected_player_source)
+            if client and (tile is None or not tile.is_dropped):
+                bpm = self._bpm_from_client(client)
+                if bpm:
+                    return bpm
+        for client in self.prodj.cl.clients:
+            if client.type == "cdj" and "master" in client.state:
+                bpm = self._bpm_from_client(client)
+                if bpm:
+                    return bpm
+        return self.last_known_good_bpm if self.last_known_good_bpm else 120.0
 
-    def toggle_manual_bpm_mode(self):
+    @staticmethod
+    def _bpm_from_client(client) -> float | None:
+        """Extract effective BPM (bpm × actual_pitch) from a client object.
+        Returns None if data is missing or invalid.
+        """
+        try:
+            bpm = float(client.bpm)
+            pitch = float(client.actual_pitch)
+            if bpm > 0:
+                return bpm * pitch
+        except (TypeError, ValueError):
+            pass
+        return None
+
+
+    def toggle_manual_bpm_mode(self) -> None:
+        """Toggle between Manual BPM and Auto (CDJ-follow) mode."""
         self.manual_bpm_mode_active = self.manual_mode_button.isChecked()
         self.manual_bpm_slider.setEnabled(self.manual_bpm_mode_active)
         self.manual_bpm_label.setEnabled(self.manual_bpm_mode_active)
         self.tap_tempo_button.setEnabled(self.manual_bpm_mode_active)
 
         if self.manual_bpm_mode_active:
-            self.manual_mode_button.setText("Switch to Auto BPM")
-            current_effective_bpm = self.coasting_bpm if self.coasting_bpm is not None else self.last_known_good_bpm
-            if current_effective_bpm is None: current_effective_bpm = 120.0
-
-            self.manual_bpm_value = current_effective_bpm
-            self.manual_bpm_slider.setValue(int(self.manual_bpm_value * 10))
-            self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
+            # Consistent two-state label: checked = "Auto BPM" (click to go back to auto)
+            self.manual_mode_button.setText("Auto BPM")
+            seed_bpm = (
+                self.coasting_bpm
+                if self.coasting_bpm is not None
+                else (self.last_known_good_bpm or 120.0)
+            )
+            self.manual_bpm_value = seed_bpm
+            self.manual_bpm_slider.setValue(int(seed_bpm * 10))
+            self.manual_bpm_label.setText(f"{seed_bpm:.1f} BPM")
             self.tap_timestamps = []
-
-            if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
-            logging.info(f"Manual BPM mode enabled. Set to {self.manual_bpm_value:.1f} BPM.")
+            # Clear stale CDJ-derived display state so the metrics panel
+            # immediately shows — rather than the last CDJ values.
+            self._last_beat_number = 0
+            self._sparkline.clear()
+            self.phase_error_ms = 0.0
+            self.phase_error_history.clear()
+            self._apply_bpm(self.manual_bpm_value)
+            logging.info("Manual BPM mode enabled at %.1f BPM.", self.manual_bpm_value)
         else:
-            self.manual_mode_button.setText("Enable Manual BPM")
+            self.manual_mode_button.setText("Manual BPM")
             self.tap_timestamps = []
-            logging.info("Manual BPM mode disabled. Reverting to automatic source.")
+            logging.info("Manual BPM mode disabled — reverting to auto source.")
             self.update_midi_clock_source_logic()
         self.update_global_status_label()
+        self._refresh_metrics()
 
     def _manual_bpm_label_update(self, value):
         """Called on every valueChanged - only updates the label, no clock update."""
         self.manual_bpm_label.setText(f"{value / 10.0:.1f} BPM")
 
-    def manual_bpm_slider_changed(self):
-        """Called on sliderReleased - applies BPM to the running clock."""
-        value = self.manual_bpm_slider.value()
-        new_bpm = value / 10.0
+    def manual_bpm_slider_changed(self) -> None:
+        """Called on sliderReleased — applies new BPM to the running clock."""
+        new_bpm = self.manual_bpm_slider.value() / 10.0
         self.tap_timestamps = []
-        # Auto-activate manual mode on first touch, blocking signals so
-        # toggle_manual_bpm_mode cannot overwrite the slider position.
+        # Auto-activate manual mode on first slider touch.  Block slider
+        # signals while calling toggle so it cannot overwrite the position.
         if not self.manual_bpm_mode_active:
             self.manual_bpm_slider.blockSignals(True)
             self.manual_mode_button.setChecked(True)
@@ -1017,13 +1381,14 @@ class MidiClockMainWindow(QWidget):
             self.manual_bpm_slider.blockSignals(False)
         self.manual_bpm_value = new_bpm
         self.manual_bpm_label.setText(f"{new_bpm:.1f} BPM")
-        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-            self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
-            self.update_global_status_label()
+        self._apply_bpm(self.manual_bpm_value)
+        self.update_global_status_label()
 
-    def handle_tap_tempo_clicked(self):
+    def handle_tap_tempo_clicked(self) -> None:
+        # Fix 5d: properly activate manual mode (enables slider + tap button)
         if not self.manual_bpm_mode_active:
             self.manual_mode_button.setChecked(True)
+            self.toggle_manual_bpm_mode()
 
         current_time = time.time()
 
@@ -1053,65 +1418,60 @@ class MidiClockMainWindow(QWidget):
             self.manual_bpm_slider.setValue(int(self.manual_bpm_value * 10))
             self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
 
-            if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
-            logging.info(f"Tapped BPM: {self.manual_bpm_value:.2f} (avg over {len(intervals)} intervals)")
+            self._apply_bpm(self.manual_bpm_value)
+            logging.info(
+                "Tapped BPM: %.2f (avg over %d intervals)",
+                self.manual_bpm_value, len(intervals)
+            )
             self.update_global_status_label()
         else:
             logging.debug("Average interval is zero, cannot calculate BPM.")
 
-    def update_global_status_label(self):
+    def update_global_status_label(self) -> None:
+        """Build a concise one-line status bar summary and refresh the
+        active-source label.  Derives all values from already-computed
+        state — no duplicate client-list scanning.
+        """
         self._update_active_source_label()
-        source_desc = "None"
-        current_bpm_val = None
-        is_coasting_val = self.coasting_bpm is not None and not self.manual_bpm_mode_active
 
+        running = bool(
+            self.midi_clock_instance and self.midi_clock_instance.is_alive()
+        )
+
+        if not running:
+            self.coasting_bpm = None
+            self.global_status_label.setText("● Stopped")
+            self.global_status_label.setStyleSheet("color:#6b7280;padding:2px 4px;")
+            return
+
+        # Port short name
+        port = self.midi_port_combo.currentText()
+
+        # Source description — reuse _update_active_source_label's logic
+        # but return a compact string instead of updating a label
         if self.manual_bpm_mode_active:
-            source_desc = f"Manual @ {self.manual_bpm_value:.1f} BPM"
-            current_bpm_val = self.manual_bpm_value
-        elif self.selected_player_source is not None:
-            client = self.prodj.cl.getClient(self.selected_player_source)
-            if client and (client.player_number not in self.player_tiles or not self.player_tiles[client.player_number].is_dropped) : # Check if not dropped
-                source_desc = f"Player {client.player_number} (Selected)"
-                if client.bpm and client.actual_pitch:
-                    try:
-                        current_bpm_val = float(client.bpm) * float(client.actual_pitch)
-                    except (TypeError, ValueError):
-                        current_bpm_val = None
-        elif not is_coasting_val:
-            for client in self.prodj.cl.clients:
-                if client.type == "cdj" and "master" in client.state and \
-                   (client.player_number not in self.player_tiles or not self.player_tiles[client.player_number].is_dropped):
-                    source_desc = f"Player {client.player_number} (Network Master)"
-                    if client.bpm and client.actual_pitch:
-                        try:
-                            current_bpm_val = float(client.bpm) * float(client.actual_pitch)
-                        except (TypeError, ValueError):
-                            current_bpm_val = None
-                    break
-
-        if is_coasting_val:
-            source_desc = f"Coasting @ {self.coasting_bpm:.1f} BPM (Last Known)"
-            current_bpm_val = self.coasting_bpm
-
-        if current_bpm_val is None and not self.manual_bpm_mode_active:
-             current_bpm_val = self.last_known_good_bpm if self.last_known_good_bpm else 120.0
-             if not is_coasting_val and source_desc == "None":
-                 source_desc = f"Default @ {current_bpm_val:.1f} BPM"
-
-        status_text = "MIDI Clock: "
-        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-            status_text += f"Running on {self.midi_port_combo.currentText()}"
-            status_text += f" | Source: {source_desc}"
-            if not self.manual_bpm_mode_active and not is_coasting_val and \
-               current_bpm_val and isinstance(current_bpm_val, (int, float)) and \
-               source_desc.startswith("Player"):
-                 status_text += f" @ {current_bpm_val:.2f} BPM"
+            src_text = f"Manual {self.manual_bpm_value:.1f} BPM"
+        elif self.coasting_bpm is not None:
+            src_text = f"Coasting {self.coasting_bpm:.1f} BPM"
         else:
-            status_text += "Stopped"
-            self.coasting_bpm = None # Clear coasting BPM when clock is stopped
+            src_num = self._get_active_source_player_number()
+            if src_num is not None:
+                client = self.prodj.cl.getClient(src_num)
+                is_master = client and "master" in (client.state or [])
+                tag = " Master" if is_master else ""
+                bpm = self._bpm_from_client(client) if client else None
+                bpm_str = f" · {bpm:.1f} BPM" if bpm else ""
+                src_text = f"P{src_num}{tag}{bpm_str}"
+            else:
+                src_text = "No source"
 
-        self.global_status_label.setText(status_text)
+        # Phase error
+        err = self.phase_error_ms
+        phase_str = f" · {err:+.1f} ms" if running and self.auto_phase_correction_enabled else ""
+
+        text = f"● Running  {port}  ·  {src_text}{phase_str}"
+        self.global_status_label.setText(text)
+        self.global_status_label.setStyleSheet("color:#10b981;padding:2px 4px;")
 
     def closeEvent(self, event):
         # Ensure MIDI clock is stopped if running
@@ -1119,27 +1479,30 @@ class MidiClockMainWindow(QWidget):
            self.midi_clock_instance.stop()
         super().closeEvent(event)
 
-    def open_settings_dialog(self):
+    def open_settings_dialog(self) -> None:
         dialog = MidiClockSettingsDialog(self)
         if not dialog.has_configurable_settings():
-            QMessageBox.information(self, "Settings", "No specific settings currently available for your platform.")
+            QMessageBox.information(
+                self, "Settings",
+                "No configurable settings for this platform."
+            )
             return
 
-        if dialog.exec_(): # Modal execution
-            new_preferred_backend = dialog.get_selected_backend()
-            if self.preferred_midi_backend != new_preferred_backend:
-                self.preferred_midi_backend = new_preferred_backend
-                logging.info(f"Settings updated. Preferred MIDI backend: {self.preferred_midi_backend}")
+        if dialog.exec_():
+            new_backend = dialog.get_selected_backend()
+            if self.preferred_midi_backend != new_backend:
+                self.preferred_midi_backend = new_backend
+                logging.info("Settings: MIDI backend → %s", new_backend)
 
                 if self.midi_clock_instance and self.midi_clock_instance.is_alive():
-                    logging.info("Stopping MIDI clock due to backend change.")
+                    logging.info("Stopping clock for backend change.")
                     self.midi_clock_instance.stop()
                     self.midi_clock_instance = None
-                    self.start_stop_button.setChecked(False) # Ensure button state is reset
-                    self.start_stop_button.setText("Start MIDI Clock")
-                    self.midi_port_combo.setEnabled(True) # Re-enable port selection
+                    self.start_stop_button.setChecked(False)
+                    self.start_stop_button.setText("Start")
+                    self.midi_port_combo.setEnabled(True)
 
-                self.populate_midi_ports() # This will use the new preference
+                self.populate_midi_ports()
                 self.update_global_status_label()
 
 
@@ -1230,48 +1593,48 @@ class MidiClockSettingsDialog(QDialog):
 
 
 if __name__ == '__main__':
-    from PyQt5.QtWidgets import QApplication
-    from unittest.mock import Mock # For MockProDj
+    # Stand-alone smoke-test: python -m prodj.gui.midiclock_widgets
+    from qtpy.QtWidgets import QApplication
+    from qtpy.QtCore import QObject
+    from unittest.mock import Mock
 
     logging.basicConfig(level=logging.DEBUG, format='%(levelname)-7s %(module)s: %(message)s')
 
-    class MockProDj:
-        class MockClient:
-            def __init__(self, num, master=False, bpm=120.0, pitch=1.0):
-                self.player_number = num
-                self.model = "CDJ-MOCK"
-                self.type = "cdj"
-                self.bpm = bpm
-                self.actual_pitch = pitch
-                self.state = ["master"] if master else []
-                self.fw = "1.00"
+    class _MockClient:
+        def __init__(self, num, master=False, bpm=120.0, pitch=1.0):
+            self.player_number = num
+            self.model = "CDJ-MOCK"
+            self.type = "cdj"
+            self.bpm = bpm
+            self.actual_pitch = pitch
+            self.state = ["master"] if master else []
+            self.fw = "1.00"
 
+    class _MockProDj:
         def __init__(self):
             self.cl = Mock()
-            self.cl.clients = [self.MockClient(1, master=True, bpm=125.0), self.MockClient(2, bpm=130.0)]
-            self.cl.getClient = self._get_client # Assign method directly
+            self.cl.clients = [
+                _MockClient(1, master=True, bpm=125.0),
+                _MockClient(2, bpm=130.0),
+            ]
+            self.cl.getClient = lambda pn: next(
+                (c for c in self.cl.clients if c.player_number == pn), None
+            )
+        def set_client_change_callback(self, cb): pass
+        def start(self): pass
+        def vcdj_set_player_number(self, n): pass
+        def vcdj_enable(self): pass
+        def stop(self): pass
 
-        def _get_client(self, player_number):
-            for client_obj in self.cl.clients:
-                if client_obj.player_number == player_number:
-                    return client_obj
-            return None
+    class _MockSignalBridge(QObject):
+        client_change_signal     = Signal(int)
+        master_change_signal     = Signal(int)
+        beat_signal              = Signal()
+        prodj_beat_signal        = Signal(int, int)
+        prodj_beat_timing_signal = Signal(int, int, object)
+        metadata_ready_signal    = Signal()
 
-        def set_client_change_callback(self, cb): pass # Mock
-        def start(self): pass # Mock
-        def vcdj_set_player_number(self, num): pass # Mock
-        def vcdj_enable(self): pass # Mock
-        def stop(self): pass # Mock
-
-
-    class MockSignalBridge(QObject):
-        client_change_signal = pyqtSignal(int)
-        master_change_signal = pyqtSignal(int)
-
-    app = QApplication(sys.argv)
-    mock_prodj_instance = MockProDj()
-    mock_bridge_instance = MockSignalBridge()
-
-    window = MidiClockMainWindow(mock_prodj_instance, mock_bridge_instance)
-    window.show()
-    sys.exit(app.exec_())
+    _app = QApplication(sys.argv)
+    _window = MidiClockMainWindow(_MockProDj(), _MockSignalBridge())
+    _window.show()
+    sys.exit(_app.exec_())

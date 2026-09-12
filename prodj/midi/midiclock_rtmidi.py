@@ -132,7 +132,12 @@ class MidiClock(Thread):
 
     while self.keep_running:
       # Send the MIDI clock tick
-      self.midiout.send_message([0xF8])
+      try:
+        self.midiout.send_message([0xF8])
+      except Exception as e:
+        logging.error("rtmidi: send_message failed: %s — stopping clock", e)
+        self.keep_running = False
+        break
 
       # Fire beat callback on quarter-note boundaries (every 24 ticks)
       if self.beat_callback and beat_count % 24 == 0:
@@ -170,8 +175,8 @@ class MidiClock(Thread):
     if new_delay != self.delay:
       self.delay = new_delay
       self._delay_changed = True  # signal loop to re-anchor deadline
-    logging.info("rtmidi: BPM=%.2f pitch_offset=%.2fms tick_delay=%.6fs",
-                 bpm, pitch_offset, self.delay)
+    logging.debug("rtmidi: BPM=%.2f pitch_offset=%.2fms tick_delay=%.6fs",
+                  bpm, pitch_offset, self.delay)
 
   def adjust_phase(self, ms):
     """Shift the clock grid by ms milliseconds (positive=later, negative=earlier).

@@ -9,25 +9,19 @@ from qtpy.QtCore import Signal, QObject
 
 from prodj.core.prodj import ProDj
 from prodj.gui.midiclock_widgets import MidiClockMainWindow
-# Placeholder for MidiClock class, will decide on exact import later
-# from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock
-# try:
-#     from prodj.midi.midiclock_alsaseq import MidiClock as AlsaMidiClock
-# except ImportError:
-#     AlsaMidiClock = None
-
-DEFAULT_LOG_LEVEL = logging.INFO
 
 class SignalBridge(QObject):
     """
     A QObject bridge to safely emit signals from non-Qt threads (like ProDj callbacks)
     to the Qt main thread.
     """
-    client_change_signal = Signal(int)
-    master_change_signal = Signal(int) # Player number of the new master, or 0 if no master
-    beat_signal = Signal()  # Signal for MIDI beat events
-    prodj_beat_signal = Signal(int, int) # player_number, beat_number
-    prodj_beat_timing_signal = Signal(int, int, object) # player_number, beat_number, next_beat_ms (or None)
+    client_change_signal     = Signal(int)
+    master_change_signal     = Signal(int)
+    beat_signal              = Signal()
+    prodj_beat_signal        = Signal(int, int)
+    prodj_beat_timing_signal = Signal(int, int, object)
+    # Emitted when metadata for any player arrives (triggers track info bar refresh)
+    metadata_ready_signal    = Signal()
 
 class MidiClockApp:
     def __init__(self, args):
@@ -36,7 +30,7 @@ class MidiClockApp:
         numeric_level = getattr(logging, args.loglevel.upper(), None)
         if not isinstance(numeric_level, int):
             # Should not happen if choices are enforced by argparse
-            logging.error(f"Invalid log level: {args.loglevel}. Defaulting to INFO.")
+            logging.error("Invalid log level: %s. Defaulting to INFO.", args.loglevel)
             numeric_level = logging.INFO
         logging.basicConfig(level=numeric_level, format='%(levelname)-7s %(module)s: %(message)s')
 
@@ -129,30 +123,55 @@ class MidiClockApp:
             }
             QGroupBox {
                 font-weight: 600;
-                border: 1px solid #3b3b3b;
+                border: 1px solid #2a2a2a;
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #262626, stop:1 #202020);
-                margin-top: 18px;
-                padding-top: 16px;
-                border-radius: 8px;
+                    stop:0 #232323, stop:1 #1e1e1e);
+                margin-top: 22px;
+                padding-top: 8px;
+                border-radius: 6px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                padding: 0 6px;
                 left: 10px;
-                color: #0ea5e9;
-                font-size: 9pt;
+                top: 0px;
+                padding: 2px 8px;
+                background: #0c4a6e;
+                color: #7dd3fc;
+                font-size: 8pt;
                 font-weight: 700;
+                letter-spacing: 0.06em;
+                border-radius: 3px;
             }
             QRadioButton {
-                spacing: 8px;
+                spacing: 10px;
                 padding: 4px;
                 color: #e5e7eb;
             }
             QRadioButton::indicator {
-                width: 20px;
-                height: 20px;
+                width: 18px;
+                height: 18px;
+                border-radius: 9px;
+                border: 2px solid #4b5563;
+                background: #1e1e1e;
+            }
+            QRadioButton::indicator:hover {
+                border: 2px solid #7dd3fc;
+                background: #1e2a35;
+            }
+            QRadioButton::indicator:checked {
+                border: 2px solid #059669;
+                background: qradialgradient(
+                    cx:0.5, cy:0.5, radius:0.5,
+                    fx:0.5, fy:0.5,
+                    stop:0 #10b981,
+                    stop:0.55 #10b981,
+                    stop:0.56 #065f46,
+                    stop:1 #065f46
+                );
+            }
+            QRadioButton::indicator:checked:hover {
+                border: 2px solid #10b981;
             }
             QDoubleSpinBox {
                 background: #2d2d2d;
@@ -174,12 +193,30 @@ class MidiClockApp:
         self.prodj = ProDj(iface=self.args.iface)
         self.signal_bridge = SignalBridge()
 
-        self.prodj.set_client_keepalive_callback(lambda pn: self.signal_bridge.client_change_signal.emit(pn))
-        self.prodj.set_client_change_callback(lambda pn: self.signal_bridge.client_change_signal.emit(pn))
-        self.prodj.cl.beat_callback = lambda pn, bn: self.signal_bridge.prodj_beat_signal.emit(pn, bn)
-        self.prodj.cl.beat_with_timing_callback = lambda pn, bn, nb_ms: self.signal_bridge.prodj_beat_timing_signal.emit(pn, bn, nb_ms)
-        # We might need a more specific callback for master changes, or derive it in client_change.
-        # For now, client_change can trigger UI updates which can check master status.
+        # Fix 2a: set_client_keepalive_callback fires on every keepalive packet
+        # (~1 Hz per CDJ) while set_client_change_callback fires only when
+        # player state actually changes.  We only need the change callback for
+        # the MIDI-clock UI; keepalive is used solely for timeout / presence
+        # detection in the core layer and does not need a UI signal.
+        self.prodj.set_client_change_callback(
+            lambda pn: self.signal_bridge.client_change_signal.emit(pn)
+        )
+        # Wire a metadata callback so the track info bar updates as soon as
+        # title/artist data arrives from the CDJ database (asynchronous).
+        # We replace the clientlist's logPlayedTrackCallback with one that
+        # also emits metadata_ready_signal into the Qt thread.
+        _orig_log = self.prodj.cl.logPlayedTrackCallback
+        _bridge = self.signal_bridge
+        def _meta_callback(request, source_player_number, slot, item_id, reply):
+            _orig_log(request, source_player_number, slot, item_id, reply)
+            _bridge.metadata_ready_signal.emit()
+        self.prodj.cl.logPlayedTrackCallback = _meta_callback
+        self.prodj.cl.beat_callback = (
+            lambda pn, bn: self.signal_bridge.prodj_beat_signal.emit(pn, bn)
+        )
+        self.prodj.cl.beat_with_timing_callback = (
+            lambda pn, bn, nb_ms: self.signal_bridge.prodj_beat_timing_signal.emit(pn, bn, nb_ms)
+        )
 
         self.main_window = MidiClockMainWindow(self.prodj, self.signal_bridge)
         if self.args.fullscreen:
@@ -187,33 +224,16 @@ class MidiClockApp:
         else:
             self.main_window.show()
 
-        # Connect signals from bridge to main window slots
-        # Note: MidiClockMainWindow._connect_signals already connects to signal_bridge.client_change_signal
-        # If master_change_signal is used, connect it here or in the window.
-        # self.signal_bridge.master_change_signal.connect(self.main_window.update_master_indicator)
-
-
-    def handle_client_change(self, player_number):
-        # This is called from ProDj's thread. Emit a signal to update UI in Qt thread.
-        # The client_change_signal will trigger updates in MidiClockMainWindow,
-        # which can then determine master status and other details.
-        self.signal_bridge.client_change_signal.emit(player_number)
-
-
     def run(self):
-        logging.info("Starting ProDJ Link listener for MidiClock UI...")
+        logging.info("Starting ProDJ Link MIDI Clock...")
         self.prodj.start()
-        # It's important that vCDJ is enabled if we want this app to have a presence
-        # on the network, which might be needed for some interactions or if it's
-        # supposed to act like a virtual device. For just listening and sending MIDI clock,
-        # it might not be strictly necessary to have its own vCDJ player number if it's only observing.
-        # However, midiclock.py does enable it.
-        self.prodj.vcdj_set_player_number(6) # Use a different player number than default monitor
+        # Player 6 keeps us off the standard 1-4 CDJ slots
+        self.prodj.vcdj_set_player_number(5)  # must be 1-4 for DB queries; 5 is safe observer slot
         self.prodj.vcdj_enable()
 
         exit_code = self.app.exec()
 
-        logging.info("Shutting down MidiClock UI and ProDJ Link listener...")
+        logging.info("Shutting down.")
         self.prodj.stop()
         sys.exit(exit_code)
 
@@ -230,14 +250,6 @@ def main():
     # Add other arguments if needed, e.g., for forcing MIDI backend eventually
 
     args = parser.parse_args()
-
-    # Convert loglevel string to logging module constant
-    # Note: MidiClockApp __init__ currently takes the args.loglevel as is from old setup.
-    # We need to pass the numeric level or have MidiClockApp handle the conversion.
-    # For consistency, let's do conversion here and MidiClockApp can expect numeric_level.
-    # However, __init__ uses args.loglevel directly for basicConfig. So, let basicConfig handle it.
-    # The change will be in how basicConfig is called in __init__.
-
     app_instance = MidiClockApp(args)
     app_instance.run()
 
