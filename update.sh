@@ -1,6 +1,10 @@
+
+
+
 #!/bin/bash
 
 # ProDJ Link MIDI Clock - Update Script
+# Works on Linux, macOS and Raspberry Pi
 # Run this from the repository folder
 
 echo "----------------------------------------------------"
@@ -16,12 +20,6 @@ echo "[2/3] Refreshing Python environment..."
 # Check if venv exists, if not run install
 if [ ! -d ".venv" ]; then
     echo "Virtual environment not found. Running full installation..."
-    bash install.sh
-    exit 0
-fi
-
-source .venv/bin/activate
-pip install --upgrade pip setuptools wheel || true
 # Clean up potential MIDI conflicts that might have appeared with new code
 pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
 pip install -r requirements.txt || true

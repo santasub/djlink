@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 
 # Timing approach: absolute-deadline loop with sleep+busywait.
-# On Windows, timeBeginPeriod(1) is activated automatically to get 1ms timer
-# resolution (default is ~15ms which makes naive sleep() completely unusable).
-# On Linux, prefer the alsaseq backend which offloads scheduling to the kernel.
+#
+# Platform notes:
+#   Windows  – default timer granularity ~15ms → we activate timeBeginPeriod(1)
+#              to bring it to 1ms, then busywait the last 1ms.
+#   macOS    – time.perf_counter() uses mach_absolute_time (nanosecond precision),
+#              CoreMIDI scheduling is excellent; busywait guard of 0.1ms is enough.
+#   Linux/Pi – prefer the alsaseq backend (kernel-level scheduling, no busywait
+#              needed). If rtmidi is used anyway, 0.2ms guard is sufficient.
 
 import sys
 import ctypes
@@ -12,7 +17,9 @@ import time
 import rtmidi
 import logging
 
-# --- Windows high-resolution timer setup ---
+# --- Platform-specific timer setup ---
+
+# Windows: winmm.timeBeginPeriod(1) raises scheduler resolution to 1ms
 _winmm = None
 if sys.platform == 'win32':
     try:
@@ -20,19 +27,27 @@ if sys.platform == 'win32':
     except OSError:
         _winmm = None
 
-def _win_timer_begin():
-    if _winmm:
+def _timer_begin():
+    if sys.platform == 'win32' and _winmm:
         _winmm.timeBeginPeriod(1)
         logging.debug("rtmidi: Windows timeBeginPeriod(1) activated")
+    # macOS / Linux: nothing to do
 
-def _win_timer_end():
-    if _winmm:
+def _timer_end():
+    if sys.platform == 'win32' and _winmm:
         _winmm.timeEndPeriod(1)
         logging.debug("rtmidi: Windows timeEndPeriod(1) released")
 
-# Guard time before deadline where we stop sleeping and busy-wait instead.
-# 1 ms is safe on Windows with timeBeginPeriod(1); on Linux 0.2ms is fine.
-_BUSYWAIT_GUARD_S = 0.001 if sys.platform == 'win32' else 0.0002
+# Busywait guard: how many seconds before the deadline we stop sleeping.
+#   Windows  1.0ms  – sleep() granularity with timeBeginPeriod(1)
+#   macOS    0.1ms  – mach_absolute_time is very precise, tiny guard needed
+#   Linux    0.2ms  – CLOCK_REALTIME, generally fine for non-RT kernel
+if sys.platform == 'win32':
+    _BUSYWAIT_GUARD_S = 0.001
+elif sys.platform == 'darwin':
+    _BUSYWAIT_GUARD_S = 0.0001
+else:
+    _BUSYWAIT_GUARD_S = 0.0002
 
 
 class MidiClock(Thread):
@@ -74,11 +89,11 @@ class MidiClock(Thread):
       pass
 
   def run(self):
-    _win_timer_begin()
+    _timer_begin()
     try:
       self._run_loop()
     finally:
-      _win_timer_end()
+      _timer_end()
 
   def _run_loop(self):
     beat_count = 0

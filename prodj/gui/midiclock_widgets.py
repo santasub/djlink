@@ -1106,39 +1106,67 @@ class MidiClockSettingsDialog(QDialog):
         super().__init__(parent)
         self.parent_window = parent
         self.setWindowTitle("MIDI Clock Settings")
-        self.setMinimumWidth(300)
+        self.setMinimumWidth(350)
         self.configurable_settings_present = False
 
         layout = QVBoxLayout(self)
 
+        # --- Platform info label ---
+        platform_names = {'linux': 'Linux', 'darwin': 'macOS', 'win32': 'Windows'}
+        platform_str = platform_names.get(sys.platform, sys.platform)
+        info_label = QLabel(f"Platform: {platform_str} | Backend: rtmidi"
+                            + (" / ALSA" if AlsaMidiClock is not None else ""))
+        info_label.setStyleSheet("color:#6b7280; font-size:10pt;")
+        layout.addWidget(info_label)
+
+        # --- Backend selection (Linux only, ALSA available) ---
+        self.alsa_radio = None
+        self.rtmidi_radio = None
+
         if sys.platform.startswith('linux') and AlsaMidiClock is not None:
             self.configurable_settings_present = True
-            backend_group = QGroupBox("MIDI Backend Preference (Linux)")
+            backend_group = QGroupBox("MIDI Backend Preference")
             backend_layout = QVBoxLayout()
 
-            self.alsa_radio = QRadioButton("Prefer ALSA")
-            self.rtmidi_radio = QRadioButton("Prefer rtmidi")
+            self.alsa_radio = QRadioButton("Prefer ALSA  (recommended — kernel-level timing)")
+            self.rtmidi_radio = QRadioButton("Prefer rtmidi  (fallback, software timing)")
 
-            current_preference = "ALSA" # Default preference on Linux if ALSA is available
+            current_preference = "ALSA"
             if self.parent_window and getattr(self.parent_window, 'preferred_midi_backend', None):
                  current_preference = self.parent_window.preferred_midi_backend
 
             if current_preference == "ALSA":
                 self.alsa_radio.setChecked(True)
-            elif current_preference == "rtmidi":
+            else:
                 self.rtmidi_radio.setChecked(True)
-            # If no preference set, ALSA is default if available on Linux
 
             backend_layout.addWidget(self.alsa_radio)
             backend_layout.addWidget(self.rtmidi_radio)
             backend_group.setLayout(backend_layout)
             layout.addWidget(backend_group)
-        else:
-            self.alsa_radio = None
-            self.rtmidi_radio = None
 
-        # If no settings were added, we could add a label here.
-        # But open_settings_dialog now handles this.
+        elif sys.platform == 'darwin':
+            # macOS: rtmidi via CoreMIDI, no choice needed but show a note
+            self.configurable_settings_present = False
+            mac_label = QLabel(
+                "macOS: using rtmidi with CoreMIDI backend.\n"
+                "Timing is handled via mach_absolute_time — no further\n"
+                "configuration required."
+            )
+            mac_label.setStyleSheet("color:#9ca3af; font-size:10pt;")
+            mac_label.setWordWrap(True)
+            layout.addWidget(mac_label)
+
+        elif sys.platform == 'win32':
+            self.configurable_settings_present = False
+            win_label = QLabel(
+                "Windows: using rtmidi with WinMM backend.\n"
+                "High-resolution timer (timeBeginPeriod) is activated\n"
+                "automatically while the MIDI clock is running."
+            )
+            win_label.setStyleSheet("color:#9ca3af; font-size:10pt;")
+            win_label.setWordWrap(True)
+            layout.addWidget(win_label)
 
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
@@ -1153,8 +1181,7 @@ class MidiClockSettingsDialog(QDialog):
             return "ALSA"
         if self.rtmidi_radio and self.rtmidi_radio.isChecked():
             return "rtmidi"
-
-        # Fallback default based on platform and availability
+        # macOS/Windows: always rtmidi
         if AlsaMidiClock is not None and sys.platform.startswith('linux'):
             return "ALSA"
         return "rtmidi"

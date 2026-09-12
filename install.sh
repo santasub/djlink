@@ -1,10 +1,16 @@
 #!/bin/bash
 
-# ProDJ Link MIDI Clock - Simple Installer
-# Run this from the repository folder
+# ProDJ Link MIDI Clock - Linux Installer (generic / desktop)
+# For Raspberry Pi use: bash install_rpi.sh
+# For macOS       use: bash install_mac.sh
+
+if [[ "$(uname)" == "Darwin" ]]; then
+    echo "ERROR: This script is for Linux. On macOS run: bash install_mac.sh"
+    exit 1
+fi
 
 echo "----------------------------------------------------"
-echo "  ProDJ Link MIDI Clock - Installer"
+echo "  ProDJ Link MIDI Clock - Installer (Linux)"
 echo "----------------------------------------------------"
 
 # 1. System Dependencies
