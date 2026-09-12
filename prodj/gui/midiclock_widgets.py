@@ -477,7 +477,8 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_slider = QSlider(Qt.Horizontal)
         self.manual_bpm_slider.setRange(300, 3000)
         self.manual_bpm_slider.setValue(1200)
-        self.manual_bpm_slider.valueChanged.connect(self.manual_bpm_slider_changed)
+        self.manual_bpm_slider.valueChanged.connect(self._manual_bpm_label_update)
+        self.manual_bpm_slider.sliderReleased.connect(self.manual_bpm_slider_changed)
         self.manual_bpm_slider.setEnabled(False)
         manual_bottom.addWidget(self.manual_bpm_slider)
         self.manual_bpm_label = QLabel("120.0")
@@ -998,19 +999,22 @@ class MidiClockMainWindow(QWidget):
             self.update_midi_clock_source_logic()
         self.update_global_status_label()
 
-    def manual_bpm_slider_changed(self, value):
+    def _manual_bpm_label_update(self, value):
+        """Called on every valueChanged - only updates the label, no clock update."""
+        self.manual_bpm_label.setText(f"{value / 10.0:.1f} BPM")
+
+    def manual_bpm_slider_changed(self):
+        """Called on sliderReleased - applies BPM to the running clock."""
+        value = self.manual_bpm_slider.value()
         new_bpm = value / 10.0
-        self.manual_bpm_label.setText(f"{new_bpm:.1f} BPM")
         self.tap_timestamps = []
-        # Auto-activate manual mode when user moves the slider.
-        # Block signals on the slider while activating so toggle_manual_bpm_mode
-        # cannot reset the slider value and overwrite what the user just set.
+        # Auto-activate manual mode on first touch, blocking signals so
+        # toggle_manual_bpm_mode cannot overwrite the slider position.
         if not self.manual_bpm_mode_active:
             self.manual_bpm_slider.blockSignals(True)
             self.manual_mode_button.setChecked(True)
-            self.toggle_manual_bpm_mode()   # may call slider.setValue internally
+            self.toggle_manual_bpm_mode()
             self.manual_bpm_slider.blockSignals(False)
-        # Now apply the user's intended value
         self.manual_bpm_value = new_bpm
         self.manual_bpm_label.setText(f"{new_bpm:.1f} BPM")
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
