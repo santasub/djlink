@@ -1030,9 +1030,12 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_value = value / 10.0
         self.manual_bpm_label.setText(f"{self.manual_bpm_value:.1f} BPM")
         self.tap_timestamps = []
-        if self.manual_bpm_mode_active and self.midi_clock_instance and self.midi_clock_instance.is_alive():
+        # Auto-activate manual mode when user moves the slider
+        if not self.manual_bpm_mode_active:
+            self.manual_mode_button.setChecked(True)
+            self.toggle_manual_bpm_mode()
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             self.midi_clock_instance.setBpm(self.manual_bpm_value, self.precision_pitch_offset)
-        if self.manual_bpm_mode_active:
             self.update_global_status_label()
 
     def handle_tap_tempo_clicked(self):
