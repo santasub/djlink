@@ -173,8 +173,15 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_mode_active = False
         self.manual_bpm_value = 120.0
         self.tap_timestamps = []
-        self.precision_pitch_offset = 0.0 # Renamed from pitch_offset
+        self.precision_pitch_offset = 0.0
         self.last_prodj_beat_time = None
+
+        # Auto phase correction state
+        self.auto_phase_correction_enabled = True
+        self.phase_error_ms = 0.0          # last measured phase error in ms
+        self.phase_correction_strength = 0.4  # 0.0-1.0, how aggressively we correct
+        self.phase_error_history = []      # rolling history for smoothing
+        self.PHASE_HISTORY_LEN = 4
 
         self.midi_clock_instance = None # Will hold AlsaMidiClock or RtMidiClock instance
         self.preferred_midi_backend = None # "ALSA" or "rtmidi"
@@ -193,9 +200,9 @@ class MidiClockMainWindow(QWidget):
         # to communicate with the GUI thread
         self.signal_bridge.beat_signal.emit()
     
-    def _on_beat_signal(self):
-        # This runs in the GUI thread
-        self.midi_led.setStyleSheet("""
+        def _on_beat_signal(self):
+        # This runs in the GUI thread - triggered by MIDI clock output tick
+            self.midi_led.setStyleSheet("""
             background: qradialgradient(cx:0.5, cy:0.5, radius:0.5,
                 fx:0.5, fy:0.5, stop:0 #10b981, stop:1 #059669);
             border: 3px solid #10b981;
@@ -217,6 +224,42 @@ class MidiClockMainWindow(QWidget):
         self.precision_pitch_offset = 0.0
         self.pitch_label.setText("Pitch: 0.0 ms")
         self.update_midi_clock_source_logic()
+
+    def toggle_auto_sync(self):
+        self.auto_phase_correction_enabled = self.auto_sync_button.isChecked()
+        if self.auto_phase_correction_enabled:
+            self.auto_sync_button.setText("Auto Sync: ON")
+            self.phase_error_history.clear()
+            logging.info("Auto phase correction enabled.")
+        else:
+            self.auto_sync_button.setText("Auto Sync: OFF")
+            self.phase_error_ms = 0.0
+            self._update_phase_error_display()
+            logging.info("Auto phase correction disabled.")
+
+    def _update_phase_error_display(self):
+        """Update the phase error label and lock LED colour based on current phase_error_ms."""
+        err = self.phase_error_ms
+        self.phase_error_label.setText(f"{err:+.1f} ms")
+
+        abs_err = abs(err)
+        if abs_err < 1.0:       # tight lock — green
+            color = "#10b981"
+            border = "#059669"
+            text_color = "#10b981"
+        elif abs_err < 5.0:     # slight drift — yellow
+            color = "#f59e0b"
+            border = "#d97706"
+            text_color = "#f59e0b"
+        else:                   # large error — red
+            color = "#ef4444"
+            border = "#dc2626"
+            text_color = "#ef4444"
+
+        self.phase_lock_led.setStyleSheet(
+            f"background:{color};border:2px solid {border};border-radius:12px;"
+        )
+        self.phase_error_label.setStyleSheet(f"color:{text_color};")
 
     def nudge(self, ms):
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
@@ -370,32 +413,66 @@ class MidiClockMainWindow(QWidget):
         pitch_bottom.addWidget(reset_button)
         pitch_layout.addLayout(pitch_bottom)
         
-        # Phase Control Section (Nudge & Sync)
+        # Phase Control Section (Auto Sync + Manual Nudge)
         phase_group = QGroupBox("Grid Alignment (Phase)")
         phase_layout = QVBoxLayout()
-        phase_layout.setSpacing(10)
+        phase_layout.setSpacing(8)
 
+        # Auto phase correction toggle + indicator
+        auto_row = QHBoxLayout()
+        self.auto_sync_button = QPushButton("Auto Sync: ON")
+        self.auto_sync_button.setCheckable(True)
+        self.auto_sync_button.setChecked(True)
+        self.auto_sync_button.setStyleSheet(
+            "QPushButton:checked { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "stop:0 #065f46,stop:1 #047857); border: 2px solid #10b981; }"
+        )
+        self.auto_sync_button.clicked.connect(self.toggle_auto_sync)
+        auto_row.addWidget(self.auto_sync_button)
+
+        # Phase lock indicator LED
+        self.phase_lock_led = QFrame()
+        self.phase_lock_led.setFixedSize(24, 24)
+        self.phase_lock_led.setStyleSheet("background:#374151;border:2px solid #4b5563;border-radius:12px;")
+        auto_row.addWidget(self.phase_lock_led)
+
+        # Phase error readout
+        self.phase_error_label = QLabel("±0.0 ms")
+        self.phase_error_label.setAlignment(Qt.AlignCenter)
+        phase_err_font = self.phase_error_label.font()
+        phase_err_font.setBold(True)
+        phase_err_font.setPointSize(12)
+        self.phase_error_label.setFont(phase_err_font)
+        self.phase_error_label.setStyleSheet("color:#6b7280;")
+        auto_row.addWidget(self.phase_error_label)
+        auto_row.addStretch()
+        phase_layout.addLayout(auto_row)
+
+        # Manual nudge (secondary, smaller)
         nudge_layout = QHBoxLayout()
-        self.nudge_minus_button = QPushButton("<< Nudge")
-        self.nudge_minus_button.clicked.connect(lambda: self.nudge(-5.0)) # 5ms nudge
+        nudge_label = QLabel("Manual nudge:")
+        nudge_label.setStyleSheet("color:#6b7280; font-size:10pt;")
+        nudge_layout.addWidget(nudge_label)
+        self.nudge_minus_button = QPushButton("<< 5ms")
+        self.nudge_minus_button.setFixedHeight(36)
+        self.nudge_minus_button.clicked.connect(lambda: self.nudge(-5.0))
         nudge_layout.addWidget(self.nudge_minus_button)
-
-        self.nudge_plus_button = QPushButton("Nudge >>")
+        self.nudge_plus_button = QPushButton("5ms >>")
+        self.nudge_plus_button.setFixedHeight(36)
         self.nudge_plus_button.clicked.connect(lambda: self.nudge(5.0))
         nudge_layout.addWidget(self.nudge_plus_button)
-        phase_layout.addLayout(nudge_layout)
-
-        self.sync_button = QPushButton("SYNC GRID")
-        self.sync_button.setStyleSheet("background-color: #1e3a8a; border: 2px solid #3b82f6; font-weight: bold;")
+        self.sync_button = QPushButton("Force Sync")
+        self.sync_button.setFixedHeight(36)
+        self.sync_button.setStyleSheet("border: 1px solid #3b82f6;")
         self.sync_button.clicked.connect(self.sync_to_grid)
-        phase_layout.addWidget(self.sync_button)
+        nudge_layout.addWidget(self.sync_button)
+        nudge_layout.addStretch()
+        phase_layout.addLayout(nudge_layout)
 
         phase_group.setLayout(phase_layout)
         row2.addWidget(phase_group)
         
         controls_layout.addLayout(row2)
-
-
 
         # Row 3: Status
         self.global_status_label = QLabel("MIDI Clock: Stopped")
@@ -411,7 +488,7 @@ class MidiClockMainWindow(QWidget):
         self.signal_bridge.client_change_signal.connect(self.handle_client_or_master_change)
         self.signal_bridge.beat_signal.connect(self._on_beat_signal)
         self.signal_bridge.prodj_beat_signal.connect(self.handle_prodj_beat)
-        # self.signal_bridge.master_change_signal.connect(self.handle_client_or_master_change) # Can simplify if client_change covers master status
+        self.signal_bridge.prodj_beat_timing_signal.connect(self.handle_prodj_beat_timing)
 
     def handle_client_or_master_change(self, player_number_changed=None):
         # This slot is called when any client changes or master status might have changed.
@@ -522,6 +599,9 @@ class MidiClockMainWindow(QWidget):
             self.selected_player_source = None # Deselect
         else:
             self.selected_player_source = player_number
+
+        # clear phase history when source changes so we don't correct based on old data
+        self.phase_error_history.clear()
 
         for num, tile_widget in self.player_tiles.items():
             tile_widget.set_selected_source(num == self.selected_player_source)
@@ -662,23 +742,91 @@ class MidiClockMainWindow(QWidget):
             self.midi_clock_instance = None
             self.start_stop_button.setText("Start")
             self.midi_port_combo.setEnabled(True)
+            # reset phase display when clock stops
+            self.phase_error_ms = 0.0
+            self.phase_error_history.clear()
+            self.phase_lock_led.setStyleSheet("background:#374151;border:2px solid #4b5563;border-radius:12px;")
+            self.phase_error_label.setText("\u00b10.0 ms")
+            self.phase_error_label.setStyleSheet("color:#6b7280;")
         self.update_global_status_label()
 
     def handle_prodj_beat(self, player_number, beat_number):
-        # Store timestamp of the beat for sync reference
-        # Determine current active sync source to match BPM logic
-        active_source = self.selected_player_source
-        if active_source is None:
-            # Look for network master
-            for client in self.prodj.cl.clients:
-                if client.type == "cdj" and "master" in client.state:
-                    if client.player_number in self.player_tiles and not self.player_tiles[client.player_number].is_dropped:
-                        active_source = client.player_number
-                        break
-        
+        # legacy: just track beat time, used by manual sync_to_grid
+        active_source = self._get_active_source_player_number()
         if player_number == active_source:
             self.last_prodj_beat_time = time.time()
-            logging.debug(f"Sync Beat tracked for Player {player_number}")
+
+    def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
+        """Called on every beat packet from the CDJ with exact next_beat distance in ms.
+        This is the heart of automatic phase correction."""
+        if self.manual_bpm_mode_active:
+            return
+        if not self.auto_phase_correction_enabled:
+            return
+        if next_beat_ms is None:
+            return  # status-packet beat, no distance info
+        if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
+            return
+
+        active_source = self._get_active_source_player_number()
+        if player_number != active_source:
+            return
+
+        # next_beat_ms is the time (in ms) until the CDJ's next beat.
+        # Our MIDI clock delay per tick is self.midi_clock_instance.delay (in seconds).
+        # One MIDI beat = 24 ticks.
+        beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
+        if beat_period_ms <= 0:
+            return
+
+        # The CDJ just fired beat N.  next_beat_ms tells us how long until beat N+1.
+        # We want our MIDI clock beat boundary to land at the same time.
+        # Error: how far ahead/behind is next_beat_ms from one full beat period?
+        # If next_beat_ms == beat_period_ms  → perfect alignment
+        # If next_beat_ms <  beat_period_ms  → we're running SLOW  (MIDI next beat is too late)
+        # If next_beat_ms >  beat_period_ms  → we're running FAST  (MIDI next beat is too early)
+        raw_error_ms = next_beat_ms - beat_period_ms
+
+        # Wrap to ±half a beat period so we always take the shortest path
+        while raw_error_ms > beat_period_ms / 2:
+            raw_error_ms -= beat_period_ms
+        while raw_error_ms < -beat_period_ms / 2:
+            raw_error_ms += beat_period_ms
+
+        # Smooth over last N beats
+        self.phase_error_history.append(raw_error_ms)
+        if len(self.phase_error_history) > self.PHASE_HISTORY_LEN:
+            self.phase_error_history.pop(0)
+        smoothed_error_ms = sum(self.phase_error_history) / len(self.phase_error_history)
+
+        # Apply a fraction of the error as correction
+        correction_ms = smoothed_error_ms * self.phase_correction_strength
+
+        self.phase_error_ms = smoothed_error_ms
+        self.midi_clock_instance.adjust_phase(correction_ms)
+
+        logging.debug(
+            f"Phase correction: next_beat={next_beat_ms:.1f}ms, "
+            f"beat_period={beat_period_ms:.1f}ms, error={smoothed_error_ms:.2f}ms, "
+            f"correction={correction_ms:.2f}ms"
+        )
+
+        # Update phase error display in UI
+        self._update_phase_error_display()
+
+    def _get_active_source_player_number(self):
+        """Returns the player number of the current BPM/phase source, or None."""
+        if self.selected_player_source is not None:
+            tile = self.player_tiles.get(self.selected_player_source)
+            if tile and not tile.is_dropped:
+                return self.selected_player_source
+        # Fall back to network master
+        for client in self.prodj.cl.clients:
+            if client.type == "cdj" and "master" in client.state:
+                tile = self.player_tiles.get(client.player_number)
+                if tile is None or not tile.is_dropped:
+                    return client.player_number
+        return None
 
     def sync_to_grid(self):
         if self.last_prodj_beat_time is None:

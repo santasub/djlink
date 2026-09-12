@@ -27,7 +27,7 @@ class SignalBridge(QObject):
     master_change_signal = Signal(int) # Player number of the new master, or 0 if no master
     beat_signal = Signal()  # Signal for MIDI beat events
     prodj_beat_signal = Signal(int, int) # player_number, beat_number
-    # Add more signals as needed
+    prodj_beat_timing_signal = Signal(int, int, object) # player_number, beat_number, next_beat_ms (or None)
 
 class MidiClockApp:
     def __init__(self, args):
@@ -193,6 +193,7 @@ class MidiClockApp:
         self.prodj.set_client_keepalive_callback(lambda pn: self.signal_bridge.client_change_signal.emit(pn))
         self.prodj.set_client_change_callback(lambda pn: self.signal_bridge.client_change_signal.emit(pn))
         self.prodj.cl.beat_callback = lambda pn, bn: self.signal_bridge.prodj_beat_signal.emit(pn, bn)
+        self.prodj.cl.beat_with_timing_callback = lambda pn, bn, nb_ms: self.signal_bridge.prodj_beat_timing_signal.emit(pn, bn, nb_ms)
         # We might need a more specific callback for master changes, or derive it in client_change.
         # For now, client_change can trigger UI updates which can check master status.
 

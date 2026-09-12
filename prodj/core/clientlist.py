@@ -11,6 +11,7 @@ class ClientList:
     self.client_change_callback = None
     self.media_change_callback = None
     self.beat_callback = None
+    self.beat_with_timing_callback = None  # callback(player_number, beat_number, next_beat_ms)
     self.log_played_tracks = True
     self.auto_request_beatgrid = True # to enable position detection
     self.auto_track_download = False
@@ -133,12 +134,15 @@ class ClientList:
       if c.bpm != new_bpm:
         c.bpm = new_bpm
         client_changed = True
-      new_beat = beat_packet.content.beat
+        new_beat = beat_packet.content.beat
+      next_beat_ms = beat_packet.content.distances.next_beat
       if c.beat != new_beat:
         c.beat = new_beat
         client_changed = True
         if self.beat_callback:
           self.beat_callback(c.player_number, new_beat)
+        if self.beat_with_timing_callback:
+          self.beat_with_timing_callback(c.player_number, new_beat, next_beat_ms)
     elif beat_packet.type == "type_absolute_position":
       if not c.supports_absolute_position_packets:
         c.supports_absolute_position_packets = True
@@ -200,6 +204,9 @@ class ClientList:
       client_changed = True
       if self.beat_callback:
         self.beat_callback(c.player_number, new_beat)
+      if self.beat_with_timing_callback:
+        # status packets don't carry next_beat distance
+        self.beat_with_timing_callback(c.player_number, new_beat, None)
 
     new_state = [x for x in ["on_air","sync","master","play"] if status_packet.content.state[x]==True]
     if c.state != new_state:
