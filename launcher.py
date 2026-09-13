@@ -234,19 +234,24 @@ class LauncherWindow(QWidget):
         self._btn_launch.setEnabled(False)
         root.addWidget(self._btn_launch)
 
-        btn_update = _make_btn("⟳   Update App", "#1e3a5f", "#0ea5e9", 90)
-        btn_update.clicked.connect(self.update_app)
-        root.addWidget(btn_update)
+        self._btn_update = _make_btn("⟳   Update App", "#1e3a5f", "#0ea5e9", 90)
+        self._btn_update.clicked.connect(self.update_app)
+        root.addWidget(self._btn_update)
 
         sys_row = QHBoxLayout()
         sys_row.setSpacing(16)
-        btn_reboot = _make_btn("↺  Reboot", "#451a03", "#f59e0b", 80)
-        btn_reboot.clicked.connect(self.reboot)
-        sys_row.addWidget(btn_reboot)
-        btn_shutdown = _make_btn("⏻  Shutdown", "#450a0a", "#ef4444", 80)
-        btn_shutdown.clicked.connect(self.shutdown)
-        sys_row.addWidget(btn_shutdown)
+        self._btn_reboot = _make_btn("↺  Reboot", "#451a03", "#f59e0b", 80)
+        self._btn_reboot.clicked.connect(self.reboot)
+        sys_row.addWidget(self._btn_reboot)
+        self._btn_shutdown = _make_btn("⏻  Shutdown", "#450a0a", "#ef4444", 80)
+        self._btn_shutdown.clicked.connect(self.shutdown)
+        sys_row.addWidget(self._btn_shutdown)
         root.addLayout(sys_row)
+
+        self._btn_close_log = _make_btn("✕   Close Log", "#1f2937", "#374151", 60)
+        self._btn_close_log.clicked.connect(self._close_log)
+        self._btn_close_log.setVisible(False)
+        root.addWidget(self._btn_close_log)
 
         # ── Status bar ────────────────────────────────────────────────────
         self._status = QLabel("")
@@ -257,17 +262,28 @@ class LauncherWindow(QWidget):
         # ── Update log panel (hidden until update runs) ──────────────────
         self._log_panel = QPlainTextEdit()
         self._log_panel.setReadOnly(True)
-        self._log_panel.setFixedHeight(180)
+        self._log_panel.setMinimumHeight(200)
+        self._log_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._log_panel.setVisible(False)
         self._log_panel.setStyleSheet("""
             QPlainTextEdit {
                 background: #0d1117;
                 color: #9ca3af;
-                border: 1px solid #374151;
+                border: 2px solid #0ea5e9;
                 border-radius: 6px;
                 font-family: "Consolas", "Courier New", monospace;
                 font-size: 9pt;
                 padding: 6px;
+            }
+            QScrollBar:vertical {
+                background: #1f2937;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151;
+                border-radius: 6px;
+                min-height: 20px;
             }
         """)
         root.addWidget(self._log_panel)
@@ -410,7 +426,12 @@ class LauncherWindow(QWidget):
     def _start_update_process(self, program: str, args: list):
         self._log_panel.clear()
         self._log_panel.setVisible(True)
-        self._set_status("Updating…", "#0ea5e9")
+        # Hide main buttons while update runs so the log has full space
+        self._btn_launch.setVisible(False)
+        self._btn_update.setVisible(False)
+        self._btn_reboot.setVisible(False)
+        self._btn_shutdown.setVisible(False)
+        self._set_status("Updating… (close log to cancel)", "#0ea5e9")
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.MergedChannels)
         self._process.setWorkingDirectory(_REPO_DIR)
@@ -429,11 +450,22 @@ class LauncherWindow(QWidget):
     def _update_finished(self, exit_code, _status):
         if exit_code == 0:
             self._set_status("Update complete — relaunch the app to use the new version.", "#10b981")
-            self._log_panel.appendPlainText("\n✔ Done.")
+            self._log_panel.appendPlainText("\n✔ Update complete.")
         else:
             self._set_status(f"Update failed (exit code {exit_code}).", "#ef4444")
             self._log_panel.appendPlainText(f"\n✘ Failed (code {exit_code}).")
         logging.info("Update finished (code %d)", exit_code)
+        # Show a close button to dismiss the log and return to main view
+        self._btn_close_log.setVisible(True)
+
+    def _close_log(self):
+        """Dismiss the update log and restore the main buttons."""
+        self._log_panel.setVisible(False)
+        self._btn_close_log.setVisible(False)
+        self._btn_launch.setVisible(True)
+        self._btn_update.setVisible(True)
+        self._btn_reboot.setVisible(True)
+        self._btn_shutdown.setVisible(True)
 
     def _confirm(self, title: str, msg: str) -> bool:
         dlg = QMessageBox(self)
