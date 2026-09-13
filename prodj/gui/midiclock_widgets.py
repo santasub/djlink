@@ -5,7 +5,7 @@ from typing import Optional, List, Tuple, Dict
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
-                             QMessageBox, QDoubleSpinBox)
+                             QMessageBox, QDoubleSpinBox, QButtonGroup)
 from qtpy.QtCore import Qt, Signal, QTimer
 
 # MIDI Clock imports
@@ -910,20 +910,63 @@ class MidiClockMainWindow(QWidget):
         manual_top.addWidget(self.tap_tempo_button)
         manual_layout.addLayout(manual_top)
 
-        manual_bottom = QHBoxLayout()
+                # Hidden slider kept for test compatibility — not shown on screen
         self.manual_bpm_slider = QSlider(Qt.Horizontal)
-        self.manual_bpm_slider.setRange(300, 2000)  # 30.0 – 200.0 BPM
+        self.manual_bpm_slider.setRange(300, 2000)
         self.manual_bpm_slider.setValue(1200)
         self.manual_bpm_slider.valueChanged.connect(self._manual_bpm_label_update)
         self.manual_bpm_slider.sliderReleased.connect(self.manual_bpm_slider_changed)
         self.manual_bpm_slider.setEnabled(False)
-        manual_bottom.addWidget(self.manual_bpm_slider)
-        self.manual_bpm_label = QLabel("120.0")
-        self.manual_bpm_label.setFixedWidth(65)
+        self.manual_bpm_slider.setVisible(False)
+
+        # ── Touch-friendly BPM display + −/+ buttons ──────────────────
+        self.manual_bpm_label = QLabel("120.0 BPM")
         self.manual_bpm_label.setAlignment(Qt.AlignCenter)
+        self.manual_bpm_label.setStyleSheet(
+            "color:#f59e0b;font-size:26pt;font-weight:bold;"
+        )
         self.manual_bpm_label.setEnabled(False)
-        manual_bottom.addWidget(self.manual_bpm_label)
-        manual_layout.addLayout(manual_bottom)
+        manual_layout.addWidget(self.manual_bpm_label)
+
+        # − / + row
+        bpm_btn_row = QHBoxLayout()
+        bpm_btn_row.setSpacing(8)
+        self._bpm_down_btn = QPushButton("-")
+        self._bpm_down_btn.setMinimumHeight(52)
+        self._bpm_down_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._bpm_down_btn.setEnabled(False)
+        self._bpm_down_btn.clicked.connect(lambda: self._nudge_manual_bpm(-1))
+        bpm_btn_row.addWidget(self._bpm_down_btn)
+        self._bpm_up_btn = QPushButton("+")
+        self._bpm_up_btn.setMinimumHeight(52)
+        self._bpm_up_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._bpm_up_btn.setEnabled(False)
+        self._bpm_up_btn.clicked.connect(lambda: self._nudge_manual_bpm(+1))
+        bpm_btn_row.addWidget(self._bpm_up_btn)
+        manual_layout.addLayout(bpm_btn_row)
+
+        # Coarse / Fine step toggle
+        step_row = QHBoxLayout()
+        step_row.setSpacing(6)
+        step_lbl = QLabel("Step:")
+        step_lbl.setStyleSheet("color:#9ca3af;")
+        step_row.addWidget(step_lbl)
+        self._bpm_step_coarse = QPushButton("1.0")
+        self._bpm_step_coarse.setCheckable(True)
+        self._bpm_step_coarse.setChecked(True)
+        self._bpm_step_coarse.setFixedHeight(36)
+        self._bpm_step_fine = QPushButton("0.1")
+        self._bpm_step_fine.setCheckable(True)
+        self._bpm_step_fine.setFixedHeight(36)
+        _step_grp = QButtonGroup(self)
+        _step_grp.setExclusive(True)
+        _step_grp.addButton(self._bpm_step_coarse)
+        _step_grp.addButton(self._bpm_step_fine)
+        step_row.addWidget(self._bpm_step_coarse)
+        step_row.addWidget(self._bpm_step_fine)
+        step_row.addStretch()
+        manual_layout.addLayout(step_row)
+
         manual_group.setLayout(manual_layout)
         mid_layout.addWidget(manual_group)
 
@@ -1425,11 +1468,24 @@ class MidiClockMainWindow(QWidget):
         return None
 
 
+    def _nudge_manual_bpm(self, direction: int) -> None:
+        """Increment or decrement manual BPM by the selected step size."""
+        step = 1.0 if self._bpm_step_coarse.isChecked() else 0.1
+        new_bpm = round(self.manual_bpm_value + direction * step, 1)
+        new_bpm = max(self.BPM_MIN, min(self.BPM_MAX, new_bpm))
+        self.manual_bpm_value = new_bpm
+        self.manual_bpm_slider.setValue(int(new_bpm * 10))
+        self.manual_bpm_label.setText(f"{new_bpm:.1f} BPM")
+        self._apply_bpm(self.manual_bpm_value)
+        self.update_global_status_label()
+
     def toggle_manual_bpm_mode(self) -> None:
         """Toggle between Manual BPM and Auto (CDJ-follow) mode."""
         self.manual_bpm_mode_active = self.manual_mode_button.isChecked()
         self.manual_bpm_slider.setEnabled(self.manual_bpm_mode_active)
         self.manual_bpm_label.setEnabled(self.manual_bpm_mode_active)
+        self._bpm_down_btn.setEnabled(self.manual_bpm_mode_active)
+        self._bpm_up_btn.setEnabled(self.manual_bpm_mode_active)
         self.tap_tempo_button.setEnabled(self.manual_bpm_mode_active)
 
         if self.manual_bpm_mode_active:
@@ -1466,6 +1522,7 @@ class MidiClockMainWindow(QWidget):
     def _manual_bpm_label_update(self, value):
         """Called on every valueChanged - only updates the label, no clock update."""
         self.manual_bpm_label.setText(f"{value / 10.0:.1f} BPM")
+        self.manual_bpm_value = value / 10.0
 
     def manual_bpm_slider_changed(self) -> None:
         """Called on sliderReleased — applies new BPM to the running clock."""
