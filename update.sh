@@ -1,16 +1,21 @@
 
-
-
 #!/bin/bash
 set -e
 
-# ProDJ Link MIDI Clock - Self-contained Update & Install Script
+# ProDJ Link MIDI Clock - Update Script
 # Works on Linux (Raspberry Pi / reTerminal) and macOS.
 # Safe to run repeatedly — installs from scratch if .venv is missing.
 #
 # Usage:
 #   bash update.sh            # update from git + refresh venv
 #   bash update.sh --iface eth0  # same, then launch with iface flag
+#
+# ============================================================
+# CONFIG — edit these if you forked the repo or use a branch
+# ============================================================
+GIT_BRANCH="main"                 # branch to pull
+RTMIDI_VERSION="1.5.8"            # pinned python-rtmidi version
+# ============================================================
 
 REPO_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$REPO_DIR"
@@ -22,8 +27,8 @@ echo "===================================================="
 
 # ── 1. Pull latest code ───────────────────────────────────────────
 echo
-echo "[1/4] Pulling latest code from GitHub (main)..."
-if git pull origin main; then
+echo "[1/4] Pulling latest code (branch: $GIT_BRANCH)..."
+if git pull origin "$GIT_BRANCH"; then
     echo "      OK — code is up to date."
 else
     echo "      WARNING: git pull failed. Continuing with current code."
@@ -66,7 +71,7 @@ pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
 pip install -r requirements.txt -q || true
 
 # Force-install the correct rtmidi version
-pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 -q || true
+pip install --force-reinstall --no-cache-dir python-rtmidi=="$RTMIDI_VERSION" -q || true
 
 # ALSA sequencer (Linux only, optional)
 if [[ "$(uname)" == "Linux" ]]; then

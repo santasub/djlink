@@ -1,22 +1,64 @@
 #!/bin/bash
 # ProDJ Link MIDI Clock - Raspberry Pi Installer
-# Tested on: Raspberry Pi OS Bookworm (64-bit), Pi 4 / Pi 5
-# Run from the repository folder: bash install_rpi.sh
+# Tested on: Raspberry Pi OS Bookworm (64-bit), Pi 4 / Pi 5 / reTerminal
 #
-# What this does differently from install.sh:
-#   - Installs real-time scheduling tools (chrt/rtkit) for better MIDI timing
-#   - Configures ALSA for low-latency output
-#   - Optionally sets up a systemd service for autostart on boot
-#   - Configures the Qt platform plugin for a DSI/HDMI touchscreen
+
+
+
+
+
+# Usage (fresh Pi, no repo yet):
+#   curl -fsSL https://raw.githubusercontent.com/santasub/djlink/main/install_rpi.sh | bash
+#   -- or --
+#   wget -qO- https://raw.githubusercontent.com/santasub/djlink/main/install_rpi.sh | bash
+#
+# Usage (already have the repo):
+#   bash install_rpi.sh
+#
+# ============================================================
+# CONFIG — edit these if you forked the repo or use a branch
+# ============================================================
+GIT_REPO_URL="https://github.com/santasub/djlink.git"  # ← change if forked
+GIT_BRANCH="main"
+INSTALL_DIR="$HOME/djlink"        # where to clone if not already present
+RTMIDI_VERSION="1.5.8"            # python-rtmidi pinned version
+QT_ROTATE="0"                     # touchscreen rotation: 0 / 90 / 180 / 270
+# ============================================================
 
 set -e
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "----------------------------------------------------"
+
+# If running from inside an existing clone, use that as root.
+# If piped via curl/wget, clone fresh into INSTALL_DIR.
+if [ -f "$(dirname "${BASH_SOURCE[0]:-./install_rpi.sh}")/midiclock-qt.py" ] 2>/dev/null; then
+    REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    REPO_ROOT="$INSTALL_DIR"
+fi
+
+echo "===================================================="
 echo "  ProDJ Link MIDI Clock - Raspberry Pi Installer"
-echo "----------------------------------------------------"
+echo "  Repo : $GIT_REPO_URL"
+echo "  Branch: $GIT_BRANCH"
+echo "  Dir  : $REPO_ROOT"
+echo "===================================================="
+
+# 0. Clone or update the repo
+echo
+if [ ! -d "$REPO_ROOT/.git" ]; then
+    echo "[0] Cloning repo into $REPO_ROOT..."
+    git clone --branch "$GIT_BRANCH" --depth 1 "$GIT_REPO_URL" "$REPO_ROOT"
+    cd "$REPO_ROOT"
+else
+    echo "[0] Repo found at $REPO_ROOT — pulling latest $GIT_BRANCH..."
+    cd "$REPO_ROOT"
+    git fetch origin
+    git checkout "$GIT_BRANCH"
+    git pull origin "$GIT_BRANCH" || echo "    WARNING: pull failed, using current code."
+fi
 
 # 1. System packages
+echo
 echo "[1/5] Installing system dependencies..."
 sudo apt-get update -qq
 sudo apt-get install -y \
@@ -55,7 +97,7 @@ source "$REPO_ROOT/.venv/bin/activate"
 pip install --upgrade pip setuptools wheel -q
 pip uninstall -y rtmidi python-rtmidi 2>/dev/null || true
 pip install -r "$REPO_ROOT/requirements.txt" -q
-pip install --force-reinstall --no-cache-dir python-rtmidi==1.5.8 -q
+pip install --force-reinstall --no-cache-dir python-rtmidi=="$RTMIDI_VERSION" -q
 pip install alsaseq -q || echo "  Note: alsaseq pip install failed (may use system package instead)."
 
 # 4. Launcher scripts
