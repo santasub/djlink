@@ -2,6 +2,7 @@
 
 import sys
 from threading import Lock
+from typing import Optional, Tuple
 from qtpy.QtWidgets import QApplication, QHBoxLayout
 from qtpy.QtWidgets import QWidget
 from qtpy.QtGui import QColor, QPainter, QPixmap
@@ -45,7 +46,7 @@ class PreviewWaveformWidget(QWidget):
       self.position = relative
       self.redraw_signal.emit()
 
-  def setLoop(self, loop: tuple[float, float]):
+  def setLoop(self, loop: Optional[Tuple[float, float]]):
     if self.loop != loop:
       self.loop = loop
       self.redraw_signal.emit()

@@ -1,6 +1,7 @@
 import logging
 import sys
 import time
+from typing import Optional, List, Tuple, Dict
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
@@ -202,7 +203,7 @@ class MidiClockMainWindow(QWidget):
         self.MidiClockImpl = None
 
         # Phase-error sparkline history (shown in metrics panel)
-        self._sparkline: list[float] = []
+        self._sparkline: List[float] = []
 
         # Single persistent off-timer for the MIDI beat LED — created once,
         # restarted every beat.  Never recreated so there is no timer leak.
@@ -490,7 +491,7 @@ class MidiClockMainWindow(QWidget):
         logging.info("sync_to_grid: misalignment %.2f ms, nudge %.2f ms",
                      misalignment, nudge_ms)
 
-    def _output_bpm(self) -> float | None:
+    def _output_bpm(self) -> Optional[float]:
         """Return the BPM the clock is *actually* ticking at, derived from
         midi_clock_instance.delay, or None when the clock is stopped.
         """
@@ -1113,7 +1114,7 @@ class MidiClockMainWindow(QWidget):
             return
 
         try:
-            ports: list[tuple[str, dict]] = []  # (display_name, open_kwargs)
+            ports: List[Tuple[str, Dict]] = []  # (display_name, open_kwargs)
             if self.MidiClockImpl == AlsaMidiClock:
                 # Enumerate via /proc without holding a WinMM handle
                 tmp = AlsaMidiClock.__new__(AlsaMidiClock)
@@ -1326,7 +1327,7 @@ class MidiClockMainWindow(QWidget):
             self.update_global_status_label()
             return
 
-        final_bpm: float | None = None
+        final_bpm: Optional[float] = None
 
         # 1. Try explicitly selected player
         if self.selected_player_source is not None:
@@ -1410,7 +1411,7 @@ class MidiClockMainWindow(QWidget):
         return self.last_known_good_bpm if self.last_known_good_bpm else 120.0
 
     @staticmethod
-    def _bpm_from_client(client) -> float | None:
+    def _bpm_from_client(client) -> Optional[float]:
         """Extract effective BPM (bpm × actual_pitch) from a client object.
         Returns None if data is missing or invalid.
         """

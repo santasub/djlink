@@ -3,6 +3,7 @@
 import sys
 import logging
 from threading import Lock
+from typing import Optional, Tuple
 from qtpy.QtCore import Signal, QSize, Qt
 from qtpy.QtWidgets import QApplication, QHBoxLayout, QOpenGLWidget, QSlider, QWidget
 from qtpy.QtGui import QSurfaceFormat
@@ -79,7 +80,7 @@ class GLWaveformWidget(QOpenGLWidget):
       self.beatgrid_data = beatgrid_data
       self.update()
 
-  def setLoop(self, loop: tuple[float, float]):
+  def setLoop(self, loop: Optional[Tuple[float, float]]):
     if self.loop != loop:
       self.loop = loop
       self.update()
