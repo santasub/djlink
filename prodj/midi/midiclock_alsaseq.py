@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import threading
 from threading import Thread
 import time
 import math
@@ -15,14 +16,21 @@ class MidiClock(Thread):
     self.client_port = None
     self.time_s = 0
     self.time_ns = 0
+    self._bpm_lock = threading.Lock()    # guards _delay, add_s, add_ns
+    self._delay = 60.0/120.0/24.0       # Default 120 BPM
     self.add_s = 0
-    self.add_ns = 0
+    self.add_ns = math.floor(1e9 * self._delay)
     self.enqueue_at_once = 24
     self.beat_callback = None
-    self.delay = 60.0/120.0/24.0 # Default 120 BPM
 
     # this call causes /proc/asound/seq/clients to be created
     alsaseq.client('MidiClock', 0, 1, True)
+
+  @property
+  def delay(self):
+    """Thread-safe read of the current tick delay (seconds)."""
+    with self._bpm_lock:
+      return self._delay
 
   # this may only be called after creating this object
   def iter_alsa_seq_clients(self):
@@ -71,22 +79,30 @@ class MidiClock(Thread):
     alsaseq.connectto(0, self.client_id, self.client_port)
 
   def advance_time(self):
-    self.time_ns += self.add_ns
-    if self.time_ns > 1000000000:
+    with self._bpm_lock:
+      add_s = self.add_s
+      add_ns = self.add_ns
+    self.time_ns += add_ns
+    if self.time_ns >= 1000000000:
       self.time_s += 1
       self.time_ns -= 1000000000
-    self.time_s = self.time_s + self.add_s
+    self.time_s = self.time_s + add_s
 
   def set_beat_callback(self, callback):
       self.beat_callback = callback
 
   def enqueue_events(self):
+    fire_beat = False
     for i in range(self.enqueue_at_once):
       send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
       alsaseq.output(send)
-      if self.beat_callback and i % 24 == 0: # Blink every quarter note (beat)
-          self.beat_callback()
+      if i % 24 == 0:
+        fire_beat = True  # note: beat boundary hit; callback fired after loop
       self.advance_time()
+    # Fire beat callback outside the enqueue loop so any I/O or locking
+    # inside the callback cannot stall the ALSA output queue fill.
+    if fire_beat and self.beat_callback:
+      self.beat_callback()
 
   def send_note(self, note):
     alsaseq.output((6, 0, 0, 0, (0,0), (128,0), (self.client_id, self.client_port), (0,note,127,0,0)))
@@ -98,7 +114,7 @@ class MidiClock(Thread):
     while self.keep_running:
       # not using alsaseq.syncoutput() here, as we would not be fast enough to enqueue more events after
       # the queue has flushed, thus sleep for half the approximate time the queue will need to drain
-      time.sleep(self.enqueue_at_once/2*self.delay)
+      time.sleep(self.enqueue_at_once / 2 * self.delay)
       status, time_t, events = alsaseq.status()
       if events >= self.enqueue_at_once:
         #logging.info("more than 24*4 events queued, skipping enqueue")
@@ -115,12 +131,18 @@ class MidiClock(Thread):
     if bpm <= 0:
       logging.warning("Ignoring zero bpm")
       return
-    self.delay = (60/bpm/24) - (pitch_offset / 1000.0)
-    if self.delay < 0:
-        self.delay = 0
-    self.add_s = math.floor(self.delay)
-    self.add_ns = math.floor(1e9*(self.delay-self.add_s))
-    logging.debug("alsaseq: BPM=%d pitch_offset=%.2fms delay=%.9fs", bpm, pitch_offset, self.delay)
+    new_delay = (60.0 / bpm / 24.0) - (pitch_offset / 1000.0)
+    if new_delay < 0:
+      new_delay = 0.0
+    new_add_s = math.floor(new_delay)
+    new_add_ns = math.floor(1e9 * (new_delay - new_add_s))
+    # Write all three fields atomically under the lock so advance_time
+    # never sees a partially-updated (delay, add_s, add_ns) triple.
+    with self._bpm_lock:
+      self._delay = new_delay
+      self.add_s = new_add_s
+      self.add_ns = new_add_ns
+    logging.debug("alsaseq: BPM=%d pitch_offset=%.2fms delay=%.9fs", bpm, pitch_offset, new_delay)
 
   def adjust_phase(self, ms):
     """Shifts the MIDI clock grid by ms milliseconds (positive = later, negative = sooner)."""

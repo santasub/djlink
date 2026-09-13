@@ -198,10 +198,23 @@ class MidiClockMainWindow(QWidget):
 
         self.midi_clock_instance = None  # AlsaMidiClock or RtMidiClock
         self.preferred_midi_backend = None  # "ALSA" or "rtmidi"
+        self._last_applied_bpm = None  # guards against redundant setBpm calls
         self.MidiClockImpl = None
 
         # Phase-error sparkline history (shown in metrics panel)
         self._sparkline: list[float] = []
+
+        # Single persistent off-timer for the MIDI beat LED — created once,
+        # restarted every beat.  Never recreated so there is no timer leak.
+        self._led_off_timer = QTimer()
+        self._led_off_timer.setSingleShot(True)
+        self._led_off_timer.timeout.connect(self._led_turn_off)
+
+        # Watchdog: checks every 2s whether the clock thread is still alive.
+        self._watchdog_timer = QTimer()
+        self._watchdog_timer.setInterval(2000)
+        self._watchdog_timer.timeout.connect(self._check_clock_crashed)
+        self._watchdog_timer.start()
 
         # Beat counter from CDJ (bar position)
         self._last_beat_number: int = 0
@@ -217,20 +230,43 @@ class MidiClockMainWindow(QWidget):
         self._refresh_track_info()
 
     def beat_received(self):
-        # This is called from MIDI clock thread, so we need to use a signal
-        # to communicate with the GUI thread
+        """Called from the MIDI clock thread on every musical beat (24 ticks).
+        Must be non-blocking — no I/O, no locks, no Qt calls other than emit().
+        Qt queued connections deliver the signal safely to the GUI thread;
+        if the GUI thread is busy the event is queued and processed in order,
+        so we do not need a manual pending-flag guard here.
+        """
         self.signal_bridge.beat_signal.emit()
 
+    def _led_turn_off(self):
+        """Slot connected to the persistent _led_off_timer — turns the beat LED off."""
+        self.midi_led.setStyleSheet(
+            "background:#2d2d2d;border:3px solid #4a4a4a;border-radius:20px;"
+        )
+
     def _on_beat_signal(self):
-        """Runs in the GUI thread — triggered by MIDI clock output beat."""
+        """Runs in the GUI thread — triggered by MIDI clock output beat.
+
+        Flash the beat LED on for 60% of the beat period (min 80 ms, max 250 ms)
+        so it is clearly visible at all BPMs.  Uses a single persistent QTimer
+        that is simply restarted each beat — no timer objects are ever created
+        or destroyed here.
+        """
+        # Derive on-time: 60% duty cycle, clamped so it's always visible
+        on_ms = 80  # safe default
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            d = self.midi_clock_instance.delay
+            if d > 0:
+                beat_ms = d * 24.0 * 1000.0
+                on_ms = int(max(80, min(250, beat_ms * 0.60)))
+
         self.midi_led.setStyleSheet(
             "background:qradialgradient(cx:0.5,cy:0.5,radius:0.5,"
             "fx:0.5,fy:0.5,stop:0 #10b981,stop:1 #059669);"
             "border:3px solid #10b981;border-radius:20px;"
         )
-        QTimer.singleShot(100, lambda: self.midi_led.setStyleSheet(
-            "background:#2d2d2d;border:3px solid #4a4a4a;border-radius:20px;"
-        ))
+        # Restart the single persistent timer — cancels any previous countdown
+        self._led_off_timer.start(on_ms)
         self._refresh_metrics()
 
     def adjust_precision_pitch(self, direction):
@@ -464,16 +500,37 @@ class MidiClockMainWindow(QWidget):
                 return 60.0 / (d * 24.0)
         return None
 
+    # Hard BPM limits — below 20 is inaudible/useless, above 200 overflows
+    # USB MIDI on Windows (WinMM saturates around 10ms/tick = 250 BPM;
+    # we stay well clear at 200 BPM = 12.5ms/tick).
+    BPM_MIN = 20.0
+    BPM_MAX = 200.0
+    # Minimum BPM change to actually push to the clock thread.
+    # Prevents CDJ status packets (arriving ~8 Hz) from continuously
+    # setting _delay_changed=True and resetting the tick deadline every
+    # 6 ticks — which locked the output tempo to the CDJ packet rate.
+    _BPM_CHANGE_THRESHOLD = 0.05  # BPM
+
     def _apply_bpm(self, bpm: float) -> None:
         """Single consolidated call-site for setBpm.  Always includes
         the current precision_pitch_offset.  Safe to call when clock is
         stopped (no-op).
         """
-        if not (self.midi_clock_instance and self.midi_clock_instance.is_alive()):
+        alive = bool(self.midi_clock_instance and self.midi_clock_instance.is_alive())
+        if not alive:
+            self._last_applied_bpm = None  # reset so next start seeds correctly
             return
         if bpm <= 0:
             logging.error("_apply_bpm: invalid BPM %.2f — ignored.", bpm)
             return
+        bpm = max(self.BPM_MIN, min(self.BPM_MAX, bpm))
+        # Skip if BPM hasn't changed meaningfully — avoids resetting the
+        # clock thread's deadline accumulator on every CDJ status packet.
+        if (self._last_applied_bpm is not None
+                and abs(bpm - self._last_applied_bpm) < self._BPM_CHANGE_THRESHOLD):
+            return
+        self._last_applied_bpm = bpm
+        logging.info("setBpm BPM=%.2f", bpm)
         self.midi_clock_instance.setBpm(bpm, self.precision_pitch_offset)
 
     def _refresh_metrics(self) -> None:
@@ -854,7 +911,7 @@ class MidiClockMainWindow(QWidget):
 
         manual_bottom = QHBoxLayout()
         self.manual_bpm_slider = QSlider(Qt.Horizontal)
-        self.manual_bpm_slider.setRange(300, 3000)
+        self.manual_bpm_slider.setRange(300, 2000)  # 30.0 – 200.0 BPM
         self.manual_bpm_slider.setValue(1200)
         self.manual_bpm_slider.valueChanged.connect(self._manual_bpm_label_update)
         self.manual_bpm_slider.sliderReleased.connect(self.manual_bpm_slider_changed)
@@ -890,26 +947,33 @@ class MidiClockMainWindow(QWidget):
         pitch_btn_row.setSpacing(8)
         self.pitch_down_button = QPushButton("-")
         self.pitch_down_button.setMinimumHeight(60)
+        self.pitch_down_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.pitch_down_button.clicked.connect(lambda: self.adjust_precision_pitch(-1))
         pitch_btn_row.addWidget(self.pitch_down_button)
         self.pitch_up_button = QPushButton("+")
         self.pitch_up_button.setMinimumHeight(60)
+        self.pitch_up_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.pitch_up_button.clicked.connect(lambda: self.adjust_precision_pitch(1))
         pitch_btn_row.addWidget(self.pitch_up_button)
         pitch_layout.addLayout(pitch_btn_row)
 
         reset_row = QHBoxLayout()
+        reset_row.setSpacing(8)
         reset_button = QPushButton("Reset")
+        reset_button.setFixedWidth(80)
         reset_button.clicked.connect(self.reset_precision_pitch)
         reset_row.addWidget(reset_button)
         lbl_step = QLabel("Step:")
         lbl_step.setStyleSheet("color:#9ca3af;")
+        lbl_step.setFixedWidth(36)
+        lbl_step.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         reset_row.addWidget(lbl_step)
         self.pitch_amount_spinbox = QDoubleSpinBox()
         self.pitch_amount_spinbox.setRange(0.1, 10.0)
         self.pitch_amount_spinbox.setSingleStep(0.1)
         self.pitch_amount_spinbox.setSuffix(" ms")
         self.pitch_amount_spinbox.setValue(1.0)
+        self.pitch_amount_spinbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         reset_row.addWidget(self.pitch_amount_spinbox)
         pitch_layout.addLayout(reset_row)
 
@@ -938,7 +1002,8 @@ class MidiClockMainWindow(QWidget):
 
     def handle_client_or_master_change(self, player_number_changed=None):
         self.update_player_display()
-        self.update_midi_clock_source_logic()
+        if not self.manual_bpm_mode_active:
+            self.update_midi_clock_source_logic()
         self._update_active_source_label()
         self._refresh_metrics()
         self._refresh_track_info()
@@ -1080,12 +1145,35 @@ class MidiClockMainWindow(QWidget):
             self.start_stop_button.setEnabled(False)
 
 
+    def _check_clock_crashed(self) -> bool:
+        """Return True if the clock instance exists but its thread has died.
+        Cleans up state so a fresh start is possible."""
+        if (self.midi_clock_instance is not None
+                and not self.midi_clock_instance.is_alive()):
+            logging.warning("MIDI clock thread died unexpectedly — cleaning up.")
+            self.midi_clock_instance = None
+            self._last_applied_bpm = None
+            self.start_stop_button.setChecked(False)
+            self.start_stop_button.setText("Start")
+            self.midi_port_combo.setEnabled(True)
+            self.update_global_status_label()
+            return True
+        return False
+
     def toggle_midi_clock_output(self) -> None:
+        # Always check for a silently-crashed thread first.
+        self._check_clock_crashed()
+
         if self.start_stop_button.isChecked():  # user wants to start
+            # Guard: if the clock is already alive, do NOT stop/restart it.
             if self.midi_clock_instance is not None and self.midi_clock_instance.is_alive():
-                logging.warning("MIDI clock already running — stopping first.")
-                self.midi_clock_instance.stop()
-                self.midi_clock_instance = None
+                logging.warning(
+                    "toggle_midi_clock_output called while clock already running — "
+                    "ignoring restart request; use setBpm() to change tempo."
+                )
+                self.start_stop_button.setText("Stop")
+                self.update_global_status_label()
+                return
 
             port_display = self.midi_port_combo.currentText()
             if not port_display or any(
@@ -1129,6 +1217,7 @@ class MidiClockMainWindow(QWidget):
                 self.midi_clock_instance.stop()
                 logging.info("MIDI clock stopped.")
             self.midi_clock_instance = None
+            self._last_applied_bpm = None  # force fresh setBpm on next start
             self.start_stop_button.setText("Start")
             self.midi_port_combo.setEnabled(True)
             # Reset phase display
@@ -1246,7 +1335,10 @@ class MidiClockMainWindow(QWidget):
             if source_player is not None and (tile is None or not tile.is_dropped):
                 final_bpm = self._bpm_from_client(source_player)
                 if final_bpm is not None:
-                    self.last_known_good_bpm = final_bpm
+                    # Only store as last-known-good when the player is actively playing
+                    client_state = source_player.play_state if hasattr(source_player, 'play_state') else 'playing'
+                    if client_state == 'playing':
+                        self.last_known_good_bpm = final_bpm
                     self.coasting_bpm = None
                 else:
                     logging.warning(
@@ -1269,7 +1361,10 @@ class MidiClockMainWindow(QWidget):
                     continue
                 final_bpm = self._bpm_from_client(client)
                 if final_bpm is not None:
-                    self.last_known_good_bpm = final_bpm
+                    # Only store as last-known-good when the player is actively playing
+                    client_state = getattr(client, 'play_state', 'playing')
+                    if client_state == 'playing':
+                        self.last_known_good_bpm = final_bpm
                     self.coasting_bpm = None
                 else:
                     logging.warning(
@@ -1339,9 +1434,12 @@ class MidiClockMainWindow(QWidget):
         if self.manual_bpm_mode_active:
             # Consistent two-state label: checked = "Auto BPM" (click to go back to auto)
             self.manual_mode_button.setText("Auto BPM")
+            # Prefer the actual running clock BPM — most accurate.
+            # Fall back to last known good (from a *playing* CDJ), then 120.
+            running_bpm = self._output_bpm()
             seed_bpm = (
-                self.coasting_bpm
-                if self.coasting_bpm is not None
+                running_bpm
+                if running_bpm is not None
                 else (self.last_known_good_bpm or 120.0)
             )
             self.manual_bpm_value = seed_bpm
@@ -1412,7 +1510,7 @@ class MidiClockMainWindow(QWidget):
 
         if avg_interval > 0:
             tapped_bpm = 60.0 / avg_interval
-            tapped_bpm = max(30.0, min(300.0, tapped_bpm))
+            tapped_bpm = max(self.BPM_MIN, min(self.BPM_MAX, tapped_bpm))
 
             self.manual_bpm_value = tapped_bpm
             self.manual_bpm_slider.setValue(int(self.manual_bpm_value * 10))
@@ -1475,8 +1573,9 @@ class MidiClockMainWindow(QWidget):
 
     def closeEvent(self, event):
         # Ensure MIDI clock is stopped if running
-        if self.midi_clock_instance and self.midi_clock_instance.is_alive(): # Assuming is_alive
-           self.midi_clock_instance.stop()
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            self.midi_clock_instance.stop()
+            logging.info("MIDI clock stopped (app close).")
         super().closeEvent(event)
 
     def open_settings_dialog(self) -> None:

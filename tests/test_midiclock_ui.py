@@ -338,5 +338,54 @@ class TestMidiClockUI(unittest.TestCase):
         self.assertIsNone(MidiClockMainWindow._bpm_from_client(c))
 
 
+    # ------------------------------------------------------------------
+    # Stop/restart regression — BPM slider must NOT stop/restart the clock
+    # ------------------------------------------------------------------
+
+    def test_bpm_slider_does_not_stop_running_clock(self):
+        """Regression: moving the BPM slider while the clock is running must
+        call setBpm() on the existing thread, never stop() + start() it.
+        Bug: toggle_midi_clock_output was re-entered while checked, which
+        tore down and recreated the clock thread on every slider move.
+        """
+        # Build a fake clock instance that is already 'alive'
+        fake_clock = MagicMock()
+        fake_clock.is_alive.return_value = True
+        fake_clock.delay = 60.0 / 120.0 / 24.0
+
+        self.window.midi_clock_instance = fake_clock
+        self.window.manual_bpm_mode_active = True
+        self.window.manual_bpm_value = 120.0
+        self.window.start_stop_button.setChecked(True)
+        self.window.start_stop_button.setText("Stop")
+        self.window.midi_port_combo.setEnabled(False)
+
+        # Simulate slider released at 95 BPM
+        self.window.manual_bpm_slider.setValue(950)   # 95.0 BPM
+        self.window.manual_bpm_slider_changed()
+
+        # Clock must NOT have been stopped
+        fake_clock.stop.assert_not_called()
+        # setBpm must have been called with the new value
+        fake_clock.setBpm.assert_called_once()
+        call_bpm = fake_clock.setBpm.call_args[0][0]
+        self.assertAlmostEqual(call_bpm, 95.0, places=1)
+        # Clock instance must still be the same object — no restart
+        self.assertIs(self.window.midi_clock_instance, fake_clock)
+
+    def test_toggle_while_running_is_ignored(self):
+        """Calling toggle_midi_clock_output(start) while the clock is already
+        alive must be a no-op — no stop(), no new instance created."""
+        fake_clock = MagicMock()
+        fake_clock.is_alive.return_value = True
+        self.window.midi_clock_instance = fake_clock
+        self.window.start_stop_button.setChecked(True)
+
+        self.window.toggle_midi_clock_output()
+
+        fake_clock.stop.assert_not_called()
+        self.assertIs(self.window.midi_clock_instance, fake_clock)
+
+
 if __name__ == '__main__':
     unittest.main()

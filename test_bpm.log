@@ -1,12 +1,12 @@
-DEBUG   datastore: 0x2866f4c6160 initialized
-DEBUG   datastore: 0x2866f4c6890 initialized
-DEBUG   datastore: 0x2866f4c6b10 initialized
-DEBUG   datastore: 0x2866f4c6d40 initialized
-DEBUG   datastore: 0x2866f4c6f70 initialized
-DEBUG   datastore: 0x2866f4c71f0 initialized
-DEBUG   datastore: 0x2866f4c7470 initialized
-DEBUG   datastore: 0x2866f4c76f0 initialized
-DEBUG   datastore: 0x2866f4c7970 initialized
+DEBUG   datastore: 0x1cb9ded6610 initialized
+DEBUG   datastore: 0x1cb9ded6890 initialized
+DEBUG   datastore: 0x1cb9ded6fc0 initialized
+DEBUG   datastore: 0x1cb9ded72e0 initialized
+DEBUG   datastore: 0x1cb9ded7510 initialized
+DEBUG   datastore: 0x1cb9ded76f0 initialized
+DEBUG   datastore: 0x1cb9ded79c0 initialized
+DEBUG   datastore: 0x1cb9ded7bf0 initialized
+DEBUG   datastore: 0x1cb9ded7f10 initialized
 DEBUG   selector_events: Using selector: SelectSelector
 INFO    midiclock_widgets: Selected rtmidi MIDI backend.
 DEBUG   midiclock_widgets: Updating player display
@@ -20,169 +20,72 @@ DEBUG   dataprovider: DataProvider starting
 DEBUG   prodj: starting main loop
 INFO    prodj: Player number set to 5
 INFO    vcdj: Starting virtual cdj with player number 5
+INFO    clientlist: New Player 5: Virtual CDJ, 192.168.1.175, 2c:0d:a7:cc:3c:51
 INFO    clientlist: New Player 2: XDJ-700, 192.168.1.169, c8:3d:fc:04:1d:8d
 DEBUG   vcdj: sending link info query to 192.168.1.169
 DEBUG   clientlist: Media usb in player 2 changed
-DEBUG   dataprovider: enqueueing metadata request with params (2, EnumIntegerString.new(3, 'usb'), 1299)
-DEBUG   dataprovider: enqueueing beatgrid request with params (2, EnumIntegerString.new(3, 'usb'), 1299)
-DEBUG   dataprovider: trying request metadata (2, EnumIntegerString.new(3, 'usb'), 1299) from store
-DEBUG   dataprovider: trying request metadata (2, EnumIntegerString.new(3, 'usb'), 1299) from pdb
-DEBUG   pdbprovider: handling metadata request params (2, EnumIntegerString.new(3, 'usb'), 1299)
+DEBUG   dataprovider: enqueueing metadata request with params (2, EnumIntegerString.new(3, 'usb'), 198)
+DEBUG   dataprovider: enqueueing beatgrid request with params (2, EnumIntegerString.new(3, 'usb'), 198)
+DEBUG   dataprovider: trying request metadata (2, EnumIntegerString.new(3, 'usb'), 198) from store
+DEBUG   dataprovider: trying request metadata (2, EnumIntegerString.new(3, 'usb'), 198) from pdb
+DEBUG   pdbprovider: handling metadata request params (2, EnumIntegerString.new(3, 'usb'), 198)
 DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
 DEBUG   nfsclient: enqueueing download of /PIONEER/rekordbox/export.pdb from 192.168.1.169
 INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/rekordbox/export.pdb to databases/player-2-usb.pdb
 INFO    clientlist: Player 2 Link Info: usb "", 1960 tracks, 70 playlists, 151423/238501MB free
 DEBUG   clientlist: Media usb in player 2 changed
-DEBUG   midiclock_widgets: Updating player display
 DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
 DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
 DEBUG   nfsclient: looking up "PIONEER"
 DEBUG   nfsclient: looking up "rekordbox"
 DEBUG   nfsclient: looking up "export.pdb"
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
 INFO    nfsdownload: download progress 0% (1400/1658880 Bytes, 0.03 MiB/s)
-INFO    clientlist: New Player 5: Virtual CDJ, 192.168.1.175, 2c:0d:a7:cc:3c:51
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
 DEBUG   nfsdownload: All necessary read requests have been dispatched.
-DEBUG   midiclock_widgets: Opening MIDI port 'USB MIDI Interface 1' kwargs={'preferred_port': 1}
-DEBUG   midiclock_rtmidi: Available MIDI ports:
-DEBUG   midiclock_rtmidi:   [0] Microsoft GS Wavetable Synth 0
-DEBUG   midiclock_rtmidi:   [1] USB MIDI Interface 1 <-- selected
-INFO    midiclock_rtmidi: rtmidi: opening port index 1 (USB MIDI Interface 1)
-DEBUG   midiclock_rtmidi: rtmidi: BPM=102.35 pitch_offset=0.00ms tick_delay=0.024426s
-INFO    midiclock_widgets: MIDI clock started on 'USB MIDI Interface 1' at 102.35 BPM
-DEBUG   midiclock_rtmidi: rtmidi: Windows timeBeginPeriod(1) activated
-DEBUG   midiclock_rtmidi: rtmidi: BPM=102.35 pitch_offset=0.00ms tick_delay=0.024426s
-INFO    midiclock_widgets: Manual BPM mode enabled at 102.3 BPM.
-WARNING rpcreceiver: Removing XID 46 which has timed out
-WARNING rpcreceiver: Removing XID 47 which has timed out
-WARNING rpcreceiver: Removing XID 49 which has timed out
-WARNING rpcreceiver: Removing XID 50 which has timed out
-WARNING rpcreceiver: Removing XID 51 which has timed out
-DEBUG   nfsclient: NfsReadData error (captured): Request timed out after 10 seconds
-DEBUG   nfsclient: NfsReadData error (captured): Request timed out after 10 seconds
-DEBUG   nfsclient: NfsReadData error (captured): Request timed out after 10 seconds
-DEBUG   nfsclient: NfsReadData error (captured): Request timed out after 10 seconds
-DEBUG   nfsclient: NfsReadData error (captured): Request timed out after 10 seconds
-WARNING nfsdownload: Read request for offset 53200 failed: Request timed out after 10 seconds. Retrying.
-WARNING nfsdownload: Read request for offset 54600 failed: Request timed out after 10 seconds. Retrying.
-WARNING nfsdownload: Read request for offset 57400 failed: Request timed out after 10 seconds. Retrying.
-WARNING nfsdownload: Read request for offset 58800 failed: Request timed out after 10 seconds. Retrying.
-WARNING nfsdownload: Read request for offset 60200 failed: Request timed out after 10 seconds. Retrying.
-INFO    nfsdownload: download progress 4% (67200/1658880 Bytes, 0.01 MiB/s)
-INFO    nfsdownload: download progress 8% (133000/1658880 Bytes, 0.01 MiB/s)
-INFO    nfsdownload: download progress 12% (200200/1658880 Bytes, 0.02 MiB/s)
-INFO    nfsdownload: download progress 16% (266000/1658880 Bytes, 0.02 MiB/s)
-INFO    nfsdownload: download progress 20% (331800/1658880 Bytes, 0.03 MiB/s)
-INFO    nfsdownload: download progress 24% (399000/1658880 Bytes, 0.04 MiB/s)
-INFO    nfsdownload: download progress 28% (464800/1658880 Bytes, 0.04 MiB/s)
-INFO    nfsdownload: download progress 32% (532000/1658880 Bytes, 0.05 MiB/s)
-INFO    nfsdownload: download progress 36% (597800/1658880 Bytes, 0.05 MiB/s)
-INFO    nfsdownload: download progress 40% (663600/1658880 Bytes, 0.06 MiB/s)
-INFO    nfsdownload: download progress 44% (730800/1658880 Bytes, 0.06 MiB/s)
-INFO    nfsdownload: download progress 48% (796600/1658880 Bytes, 0.07 MiB/s)
-INFO    nfsdownload: download progress 52% (863800/1658880 Bytes, 0.08 MiB/s)
-INFO    nfsdownload: download progress 56% (929600/1658880 Bytes, 0.08 MiB/s)
-INFO    nfsdownload: download progress 60% (995400/1658880 Bytes, 0.09 MiB/s)
-INFO    nfsdownload: download progress 64% (1062600/1658880 Bytes, 0.09 MiB/s)
-INFO    nfsdownload: download progress 68% (1128400/1658880 Bytes, 0.10 MiB/s)
-INFO    nfsdownload: download progress 72% (1195600/1658880 Bytes, 0.11 MiB/s)
-INFO    nfsdownload: download progress 76% (1261400/1658880 Bytes, 0.11 MiB/s)
-INFO    nfsdownload: download progress 80% (1327200/1658880 Bytes, 0.12 MiB/s)
-INFO    nfsdownload: download progress 84% (1394400/1658880 Bytes, 0.12 MiB/s)
-INFO    nfsdownload: download progress 88% (1460200/1658880 Bytes, 0.13 MiB/s)
-INFO    nfsdownload: download progress 92% (1527400/1658880 Bytes, 0.14 MiB/s)
-INFO    nfsdownload: download progress 96% (1593200/1658880 Bytes, 0.14 MiB/s)
-INFO    nfsdownload: download progress 100% (1658880/1658880 Bytes, 0.15 MiB/s)
-INFO    nfsdownload: finished downloading /PIONEER/rekordbox/export.pdb to databases/player-2-usb.pdb, 1658880 bytes, 0.15 MiB/s
-INFO    pdbdatabase: Loading database "databases/player-2-usb.pdb"
-DEBUG   midiclock_rtmidi: rtmidi: BPM=300.00 pitch_offset=0.00ms tick_delay=0.008333s
-DEBUG   pdbdatabase: done collecting tracks
-DEBUG   pdbdatabase: done collecting artists
-DEBUG   pdbdatabase: done collecting albums
-DEBUG   pdbdatabase: done collecting playlists
-DEBUG   pdbdatabase: done collecting playlist_map
-DEBUG   pdbdatabase: done collecting artwork
-DEBUG   pdbdatabase: done collecting colors
-DEBUG   pdbdatabase: done collecting genres
-DEBUG   pdbdatabase: done collecting key_names
-DEBUG   pdbdatabase: done collecting labels
-INFO    pdbdatabase: Loaded 404 pages, 1960 tracks, 73 playlists
-DEBUG   dataprovider: trying request beatgrid (2, EnumIntegerString.new(3, 'usb'), 1299) from store
-DEBUG   dataprovider: trying request beatgrid (2, EnumIntegerString.new(3, 'usb'), 1299) from pdb
-DEBUG   pdbprovider: handling beatgrid request params (2, EnumIntegerString.new(3, 'usb'), 1299)
-DEBUG   nfsclient: enqueueing download of /PIONEER/USBANLZ/P06D/0001FDD3/ANLZ0000.DAT from 192.168.1.169
-INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/USBANLZ/P06D/0001FDD3/ANLZ0000.DAT to None
-DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
-DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
-DEBUG   nfsclient: looking up "PIONEER"
-DEBUG   nfsclient: looking up "USBANLZ"
-DEBUG   nfsclient: looking up "P06D"
-DEBUG   nfsclient: looking up "0001FDD3"
-DEBUG   nfsclient: looking up "ANLZ0000.DAT"
-DEBUG   nfsdownload: All necessary read requests have been dispatched.
-INFO    nfsdownload: download progress 15% (1400/8924 Bytes, 0.16 MiB/s)
-INFO    nfsdownload: download progress 31% (2800/8924 Bytes, 0.17 MiB/s)
-INFO    nfsdownload: download progress 47% (4200/8924 Bytes, 0.25 MiB/s)
-INFO    nfsdownload: download progress 62% (5600/8924 Bytes, 0.34 MiB/s)
-INFO    nfsdownload: download progress 78% (7000/8924 Bytes, 0.40 MiB/s)
-INFO    nfsdownload: download progress 94% (8400/8924 Bytes, 0.47 MiB/s)
-INFO    nfsdownload: download progress 100% (8924/8924 Bytes, 0.50 MiB/s)
-INFO    nfsdownload: finished downloading /PIONEER/USBANLZ/P06D/0001FDD3/ANLZ0000.DAT to None, 8924 bytes, 0.50 MiB/s
-DEBUG   nfsclient: enqueueing download of /PIONEER/USBANLZ/P06D/0001FDD3/ANLZ0000.EXT from 192.168.1.169
-INFO    nfsclient: handling download of 192.168.1.169@usb:/PIONEER/USBANLZ/P06D/0001FDD3/ANLZ0000.EXT to None
-DEBUG   nfsclient: mount port of player 192.168.1.169: 48276
-DEBUG   nfsclient: nfs port of player 192.168.1.169: 2049
-DEBUG   nfsclient: looking up "PIONEER"
-DEBUG   nfsclient: looking up "USBANLZ"
-DEBUG   nfsclient: looking up "P06D"
-DEBUG   nfsclient: looking up "0001FDD3"
-DEBUG   nfsclient: looking up "ANLZ0000.EXT"
-INFO    nfsdownload: download progress 0% (1400/198478 Bytes, 0.04 MiB/s)
-INFO    nfsdownload: download progress 4% (8400/198478 Bytes, 0.22 MiB/s)
-INFO    nfsdownload: download progress 8% (16800/198478 Bytes, 0.36 MiB/s)
-INFO    nfsdownload: download progress 12% (25200/198478 Bytes, 0.49 MiB/s)
-INFO    nfsdownload: download progress 16% (32200/198478 Bytes, 0.60 MiB/s)
-INFO    nfsdownload: download progress 20% (40600/198478 Bytes, 0.57 MiB/s)
-INFO    nfsdownload: download progress 24% (49000/198478 Bytes, 0.64 MiB/s)
-INFO    nfsdownload: download progress 28% (56000/198478 Bytes, 0.72 MiB/s)
-INFO    nfsdownload: download progress 32% (64400/198478 Bytes, 0.78 MiB/s)
-INFO    nfsdownload: download progress 36% (72800/198478 Bytes, 0.76 MiB/s)
-INFO    nfsdownload: download progress 40% (79800/198478 Bytes, 0.80 MiB/s)
-INFO    nfsdownload: download progress 44% (88200/198478 Bytes, 0.84 MiB/s)
-INFO    nfsdownload: download progress 48% (96600/198478 Bytes, 0.87 MiB/s)
-INFO    nfsdownload: download progress 52% (103600/198478 Bytes, 0.86 MiB/s)
-INFO    nfsdownload: download progress 56% (112000/198478 Bytes, 0.91 MiB/s)
-INFO    nfsdownload: download progress 60% (120400/198478 Bytes, 0.94 MiB/s)
-INFO    nfsdownload: download progress 64% (127400/198478 Bytes, 0.97 MiB/s)
-INFO    nfsdownload: download progress 68% (135800/198478 Bytes, 0.97 MiB/s)
-INFO    nfsdownload: download progress 72% (144200/198478 Bytes, 1.02 MiB/s)
-INFO    nfsdownload: download progress 76% (151200/198478 Bytes, 1.05 MiB/s)
-INFO    nfsdownload: download progress 80% (159600/198478 Bytes, 1.04 MiB/s)
-INFO    nfsdownload: download progress 84% (168000/198478 Bytes, 1.07 MiB/s)
-INFO    nfsdownload: download progress 88% (175000/198478 Bytes, 1.10 MiB/s)
-DEBUG   nfsdownload: All necessary read requests have been dispatched.
-INFO    nfsdownload: download progress 92% (183400/198478 Bytes, 1.10 MiB/s)
-INFO    nfsdownload: download progress 96% (191800/198478 Bytes, 1.14 MiB/s)
-INFO    nfsdownload: download progress 100% (198478/198478 Bytes, 1.15 MiB/s)
-INFO    nfsdownload: finished downloading /PIONEER/USBANLZ/P06D/0001FDD3/ANLZ0000.EXT to None, 198478 bytes, 1.15 MiB/s
-DEBUG   usbanlzdatabase: Loading DAT from buffer
-DEBUG   usbanlzdatabase: Loaded 7 tags
-DEBUG   usbanlzdatabase: Loading EXT from buffer
-DEBUG   usbanlzdatabase: Loaded 10 tags
-DEBUG   midiclock_rtmidi: rtmidi: BPM=30.00 pitch_offset=0.00ms tick_delay=0.083333s
-DEBUG   midiclock_rtmidi: rtmidi: Windows timeEndPeriod(1) released
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
+DEBUG   midiclock_widgets: Updating player display
+INFO    midiclock_widgets: _apply_bpm called: bpm=99.12 pitch=0.00 clock_alive=False
 INFO    midiclock-qt: Shutting down.
+WARNING rpcreceiver: stopped but still 1 in queue
 DEBUG   prodj: main loop finished
-DEBUG   dataprovider: DataProvider shutting down
-WARNING dbclient: Requested to delete unexistant socket for player 1
-DEBUG   datastore: 0x2866f4c6160 stopped
-DEBUG   datastore: 0x2866f4c6890 stopped
-WARNING dbclient: Requested to delete unexistant socket for player 2
-WARNING dbclient: Requested to delete unexistant socket for player 3
-WARNING dbclient: Requested to delete unexistant socket for player 4
-DEBUG   datastore: 0x2866f4c6f70 stopped
-DEBUG   datastore: 0x2866f4c71f0 stopped
-DEBUG   datastore: 0x2866f4c76f0 stopped
-DEBUG   datastore: 0x2866f4c7970 stopped
-DEBUG   datastore: 0x2866f4c6b10 stopped
-DEBUG   datastore: 0x2866f4c6d40 stopped
-DEBUG   datastore: 0x2866f4c7470 stopped

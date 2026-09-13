@@ -12,6 +12,7 @@
 
 import sys
 import ctypes
+import threading
 from threading import Thread
 import time
 import rtmidi
@@ -64,11 +65,18 @@ class MidiClock(Thread):
   def __init__(self):
     super().__init__(daemon=True)
     self.keep_running = True
-    self.delay = 1.0           # seconds per MIDI tick (set via setBpm)
-    self._delay_changed = False  # flag: deadline must be re-anchored
-    self.midiout = None        # created in open() — no handle held before use
+    self._bpm_lock = threading.Lock()       # guards _delay and _delay_changed
+    self._delay = 1.0                       # seconds per MIDI tick (set via setBpm)
+    self._delay_changed = False             # flag: deadline must be re-anchored
+    self.midiout = None                     # created in open() — no handle held before use
     self.beat_callback = None
     self._phase_offset_s = 0.0  # one-shot phase nudge in seconds
+
+  @property
+  def delay(self):
+    """Thread-safe read of the current tick delay (seconds)."""
+    with self._bpm_lock:
+      return self._delay
 
   def open(self, preferred_port=0, preferred_name=None):
     """Open the MIDI output port.
@@ -108,8 +116,9 @@ class MidiClock(Thread):
       remaining = deadline - now
       if remaining <= _BUSYWAIT_GUARD_S:
         break
-      if self._delay_changed:
-        # BPM changed mid-sleep — wake up immediately
+      with self._bpm_lock:
+        changed = self._delay_changed
+      if changed:
         return
       # Sleep in chunks of max 10ms so we notice a BPM change quickly
       chunk = min(remaining - _BUSYWAIT_GUARD_S, 0.010)
@@ -130,14 +139,24 @@ class MidiClock(Thread):
     # Anchor: absolute time of the next tick's deadline
     next_deadline = time.perf_counter()
 
+    _send_errors = 0
+    _MAX_SEND_ERRORS = 5
+
     while self.keep_running:
       # Send the MIDI clock tick
       try:
         self.midiout.send_message([0xF8])
+        _send_errors = 0  # reset on success
       except Exception as e:
-        logging.error("rtmidi: send_message failed: %s — stopping clock", e)
-        self.keep_running = False
-        break
+        _send_errors += 1
+        logging.warning("rtmidi: send_message failed (%d/%d): %s",
+                        _send_errors, _MAX_SEND_ERRORS, e)
+        if _send_errors >= _MAX_SEND_ERRORS:
+          logging.error("rtmidi: too many send errors — stopping clock")
+          self.keep_running = False
+          break
+        time.sleep(0.005)  # brief pause before retry
+        continue
 
       # Fire beat callback on quarter-note boundaries (every 24 ticks)
       if self.beat_callback and beat_count % 24 == 0:
@@ -146,11 +165,15 @@ class MidiClock(Thread):
 
             # Re-anchor deadline when BPM changed — avoids burst of catch-up ticks
       # and ensures the new tempo takes effect on the very next tick.
-      if self._delay_changed:
-        self._delay_changed = False
-        next_deadline = time.perf_counter() + self.delay
+      with self._bpm_lock:
+        changed = self._delay_changed
+        current_delay = self._delay
+        if changed:
+          self._delay_changed = False
+      if changed:
+        next_deadline = time.perf_counter() + current_delay
       else:
-        next_deadline += self.delay
+        next_deadline += current_delay
 
       # Apply any pending phase nudge
       phase = self._phase_offset_s
@@ -172,11 +195,11 @@ class MidiClock(Thread):
     new_delay = (60.0 / bpm / 24.0) - (pitch_offset / 1000.0)
     if new_delay < 0:
       new_delay = 0.0
-    if new_delay != self.delay:
-      self.delay = new_delay
-      self._delay_changed = True  # signal loop to re-anchor deadline
+    with self._bpm_lock:
+      self._delay = new_delay
+      self._delay_changed = True
     logging.debug("rtmidi: BPM=%.2f pitch_offset=%.2fms tick_delay=%.6fs",
-                  bpm, pitch_offset, self.delay)
+                  bpm, pitch_offset, new_delay)
 
   def adjust_phase(self, ms):
     """Shift the clock grid by ms milliseconds (positive=later, negative=earlier).

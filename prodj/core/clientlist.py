@@ -134,7 +134,7 @@ class ClientList:
       if c.bpm != new_bpm:
         c.bpm = new_bpm
         client_changed = True
-        new_beat = beat_packet.content.beat
+      new_beat = beat_packet.content.beat  # always read, not gated on bpm change
       next_beat_ms = beat_packet.content.distances.next_beat
       if c.beat != new_beat:
         c.beat = new_beat
