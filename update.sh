@@ -28,10 +28,12 @@ echo "===================================================="
 # ── 1. Pull latest code ───────────────────────────────────────────
 echo
 echo "[1/4] Pulling latest code (branch: $GIT_BRANCH)..."
-if git pull origin "$GIT_BRANCH"; then
+# Unshallow if needed (shallow clones block pull on some Pi installs)
+git fetch --unshallow 2>/dev/null || git fetch origin
+if git reset --hard origin/"$GIT_BRANCH"; then
     echo "      OK — code is up to date."
 else
-    echo "      WARNING: git pull failed. Continuing with current code."
+    echo "      WARNING: git reset failed. Continuing with current code."
 fi
 
 # ── 2. System dependencies (Linux only) ──────────────────────────
@@ -97,6 +99,11 @@ chmod +x start_midiclock.sh
 cat > start_launcher.sh << 'DEVLAUNCHER'
 #!/bin/bash
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Ensure Qt reaches the local X display from both desktop terminal and SSH
+export DISPLAY="${DISPLAY:-:0}"
+export XAUTHORITY="${XAUTHORITY:-/home/pi/.Xauthority}"
+
 source "$DIR/.venv/bin/activate"
 exec python3 "$DIR/launcher.py" "$@"
 DEVLAUNCHER
