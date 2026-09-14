@@ -274,19 +274,22 @@ class MidiClockMainWindow(QWidget):
         self._led_off_timer.start(on_ms)
         self._refresh_metrics()
 
+    def _set_grid_step(self, val: int):
+        """Select step size and update toggle buttons."""
+        self._step_ms = val
+        for v, btn in self._step_buttons.items():
+            btn.setChecked(v == val)
+
     def adjust_grid_shift(self, direction):
         """Pure phase shift — moves the beat grid without changing BPM."""
-        amount = self.pitch_amount_spinbox.value()
-        shift_ms = amount * direction
-        self.pitch_label.setText(f"Grid: {shift_ms:+.1f} ms")
+        shift_ms = self._step_ms * direction
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             self.midi_clock_instance.adjust_phase(shift_ms)
-        # Reset label after short delay so user sees the nudge amount
-        QTimer.singleShot(600, lambda: self.pitch_label.setText("Grid Shift"))
+            self.pitch_label.setText(f"{shift_ms:+d} ms")
+            QTimer.singleShot(800, lambda: self.pitch_label.setText("◀  Grid Shift  ▶"))
 
     def reset_grid_shift(self):
-        """No accumulated state to reset — just show confirmation."""
-        self.pitch_label.setText("Grid Shift")
+        self.pitch_label.setText("◀  Grid Shift  ▶")
 
     def _on_source_radio_changed(self):
         """Called when the Clock Source radio buttons change (checked side only)."""
@@ -1023,37 +1026,50 @@ class MidiClockMainWindow(QWidget):
         shift_layout.setContentsMargins(12, 8, 12, 10)
         shift_layout.setSpacing(8)
 
-        # Single row: ◀ Earlier | step spinbox | Later ▶
+        # Row 1: full-width Earlier and Later buttons — no spinbox in between
         shift_btn_row = QHBoxLayout()
-        shift_btn_row.setSpacing(6)
-        self.pitch_down_button = QPushButton("◀")
+        shift_btn_row.setSpacing(8)
+        self.pitch_down_button = QPushButton("◀  Earlier")
         self.pitch_down_button.setMinimumHeight(56)
-        self.pitch_down_button.setFixedWidth(80)
-        self.pitch_down_button.setStyleSheet("font-size:18pt;font-weight:bold;")
+        self.pitch_down_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.pitch_down_button.setStyleSheet("font-size:13pt;font-weight:bold;")
         self.pitch_down_button.clicked.connect(lambda: self.adjust_grid_shift(-1))
         shift_btn_row.addWidget(self.pitch_down_button)
-
-        self.pitch_amount_spinbox = QDoubleSpinBox()
-        self.pitch_amount_spinbox.setRange(0.1, 50.0)
-        self.pitch_amount_spinbox.setSingleStep(0.1)
-        self.pitch_amount_spinbox.setSuffix(" ms")
-        self.pitch_amount_spinbox.setValue(5.0)
-        self.pitch_amount_spinbox.setMinimumHeight(56)
-        self.pitch_amount_spinbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        shift_btn_row.addWidget(self.pitch_amount_spinbox)
-
-        self.pitch_up_button = QPushButton("▶")
+        self.pitch_up_button = QPushButton("Later  ▶")
         self.pitch_up_button.setMinimumHeight(56)
-        self.pitch_up_button.setFixedWidth(80)
-        self.pitch_up_button.setStyleSheet("font-size:18pt;font-weight:bold;")
+        self.pitch_up_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.pitch_up_button.setStyleSheet("font-size:13pt;font-weight:bold;")
         self.pitch_up_button.clicked.connect(lambda: self.adjust_grid_shift(1))
         shift_btn_row.addWidget(self.pitch_up_button)
         shift_layout.addLayout(shift_btn_row)
 
-        self.pitch_label = QLabel("Tap ◀ / ▶ to shift the beat grid earlier or later")
+        # Row 2: step size toggle buttons (no spinbox — eliminates touch overlap)
+        self._step_ms = 5
+        self._step_buttons = {}
+        step_row = QHBoxLayout()
+        step_row.setSpacing(6)
+        step_lbl = QLabel("Step:")
+        step_lbl.setStyleSheet("color:#9ca3af;font-size:9pt;")
+        step_row.addWidget(step_lbl)
+        for v in [1, 5, 10, 25]:
+            btn = QPushButton(f"{v} ms")
+            btn.setCheckable(True)
+            btn.setChecked(v == self._step_ms)
+            btn.setFixedHeight(32)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.clicked.connect(lambda checked, val=v: self._set_grid_step(val))
+            step_row.addWidget(btn)
+            self._step_buttons[v] = btn
+        shift_layout.addLayout(step_row)
+
+        # hidden spinbox so any existing code referencing it doesn't crash
+        self.pitch_amount_spinbox = QDoubleSpinBox()
+        self.pitch_amount_spinbox.setValue(5.0)
+        self.pitch_amount_spinbox.setVisible(False)
+
+        self.pitch_label = QLabel("◀  Grid Shift  ▶")
         self.pitch_label.setAlignment(Qt.AlignCenter)
-        self.pitch_label.setWordWrap(True)
-        self.pitch_label.setStyleSheet("color:#6b7280;font-size:8pt;")
+        self.pitch_label.setStyleSheet("color:#0ea5e9;font-size:11pt;font-weight:bold;")
         shift_layout.addWidget(self.pitch_label)
 
         shift_group.setLayout(shift_layout)
