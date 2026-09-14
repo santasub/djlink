@@ -201,6 +201,7 @@ class MidiClockMainWindow(QWidget):
         self.preferred_midi_backend = None  # "ALSA" or "rtmidi"
         self._last_applied_bpm = None  # guards against redundant setBpm calls
         self.MidiClockImpl = None
+        self._beat_snap_pending = False  # one-shot grid snap on next beat packet
 
         # Phase-error sparkline history (shown in metrics panel)
         self._sparkline: List[float] = []
@@ -294,6 +295,7 @@ class MidiClockMainWindow(QWidget):
             logging.info("Source: Locked to Player %d", player_num)
         self.phase_error_history.clear()
         self._sparkline.clear()
+        self._beat_snap_pending = True  # re-snap grid to new source
         self.update_midi_clock_source_logic()
         self._update_active_source_label()
 
@@ -1225,6 +1227,7 @@ class MidiClockMainWindow(QWidget):
                 seed_bpm = self._resolve_bpm_for_seed()
                 self.midi_clock_instance.setBpm(seed_bpm, self.precision_pitch_offset)
                 self.midi_clock_instance.start()
+                self._beat_snap_pending = True  # snap grid on first CDJ beat
                 logging.info("MIDI clock started on '%s' at %.2f BPM",
                              port_display, seed_bpm)
                 self.start_stop_button.setText("Stop")
@@ -1270,8 +1273,6 @@ class MidiClockMainWindow(QWidget):
         This is the heart of automatic phase correction."""
         if self.manual_bpm_mode_active:
             return
-        if not self.auto_phase_correction_enabled:
-            return
         if next_beat_ms is None:
             return  # status-packet beat, no distance info
         if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
@@ -1279,6 +1280,28 @@ class MidiClockMainWindow(QWidget):
 
         active_source = self._get_active_source_player_number()
         if player_number != active_source:
+            return
+
+        # ── One-shot hard grid snap on clock start ────────────────────────
+        # On the first beat after the clock starts (or after a source change)
+        # we jump the phase directly to next_beat_ms so the MIDI grid locks
+        # instantly rather than drifting in over several beats.
+        if self._beat_snap_pending:
+            self._beat_snap_pending = False
+            beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
+            if beat_period_ms > 0:
+                # How far is the next CDJ beat from now vs. our next MIDI beat?
+                snap_ms = next_beat_ms - beat_period_ms
+                # Wrap to ±half period
+                while snap_ms > beat_period_ms / 2:
+                    snap_ms -= beat_period_ms
+                while snap_ms < -beat_period_ms / 2:
+                    snap_ms += beat_period_ms
+                self.midi_clock_instance.adjust_phase(snap_ms)
+                logging.info("Beat grid snap on start: %.1f ms", snap_ms)
+            return  # skip normal phase correction this beat
+
+        if not self.auto_phase_correction_enabled:
             return
 
         # next_beat_ms is the time (in ms) until the CDJ's next beat.
@@ -1482,15 +1505,20 @@ class MidiClockMainWindow(QWidget):
         else:
             self.manual_mode_button.setText("Manual BPM")
             self.tap_timestamps = []
+            # Force _apply_bpm to push the real CDJ BPM even if numerically
+            # close to the last manual value — avoids the clock staying locked
+            # to the manual BPM after switching back to auto.
+            self._last_applied_bpm = None
+            self.phase_error_history.clear()
+            self._sparkline.clear()
             logging.info("Manual BPM mode disabled — reverting to auto source.")
             self.update_midi_clock_source_logic()
         self.update_global_status_label()
         self._refresh_metrics()
 
     def _manual_bpm_label_update(self, value):
-        """Called on every valueChanged - only updates the label, no clock update."""
+        """Called on every valueChanged - only updates the label display only."""
         self.manual_bpm_label.setText(f"{value / 10.0:.1f} BPM")
-        self.manual_bpm_value = value / 10.0
 
     def manual_bpm_slider_changed(self) -> None:
         """Called on sliderReleased — applies new BPM to the running clock."""
