@@ -972,18 +972,20 @@ class MidiClockMainWindow(QWidget):
         sync_layout.setSpacing(10)
 
         # Count-in display
+                # Countdown + status on one row to save vertical space
+        countdown_row = QHBoxLayout()
         self._countdown_label = QLabel("—")
+        self._countdown_label.setFixedWidth(60)
         self._countdown_label.setAlignment(Qt.AlignCenter)
         self._countdown_label.setStyleSheet(
-            "color:#f59e0b;font-size:42pt;font-weight:bold;"
+            "color:#f59e0b;font-size:28pt;font-weight:bold;"
         )
-        sync_layout.addWidget(self._countdown_label)
-
-        self._sync_status_label = QLabel("Press Sync Start to begin count-in")
-        self._sync_status_label.setAlignment(Qt.AlignCenter)
+        countdown_row.addWidget(self._countdown_label)
+        self._sync_status_label = QLabel("Press Sync Start\nto begin count-in")
         self._sync_status_label.setWordWrap(True)
         self._sync_status_label.setStyleSheet("color:#6b7280;font-size:9pt;")
-        sync_layout.addWidget(self._sync_status_label)
+        countdown_row.addWidget(self._sync_status_label)
+        sync_layout.addLayout(countdown_row)
 
         sync_btn_row = QHBoxLayout()
         sync_btn_row.setSpacing(8)
