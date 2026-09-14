@@ -39,31 +39,33 @@ class TestMidiClockUI(unittest.TestCase):
         self.window.close()
 
     # ------------------------------------------------------------------
-    # Precision pitch
+    # Grid Shift (pure phase nudge — no BPM change)
     # ------------------------------------------------------------------
 
-    def test_pitch_initial_zero(self):
-        self.assertEqual(self.window.precision_pitch_offset, 0.0)
-        self.assertEqual(self.window.pitch_label.text(), "Pitch: +0.0 ms")
-
-    def test_pitch_up(self):
-        self.window.pitch_amount_spinbox.setValue(2.5)
-        self.window.pitch_up_button.click()
-        self.assertAlmostEqual(self.window.precision_pitch_offset, 2.5)
-        self.assertEqual(self.window.pitch_label.text(), "Pitch: +2.5 ms")
-
-    def test_pitch_down(self):
-        self.window.pitch_amount_spinbox.setValue(1.0)
-        self.window.pitch_up_button.click()   # +1.0
-        self.window.pitch_down_button.click() # -1.0 → back to 0
-        self.assertAlmostEqual(self.window.precision_pitch_offset, 0.0)
-
-    def test_pitch_reset(self):
+    def test_grid_shift_calls_adjust_phase_not_setbpm(self):
+        """Grid shift must call adjust_phase() only — never setBpm()."""
+        fake_clock = MagicMock()
+        fake_clock.is_alive.return_value = True
+        fake_clock.delay = 60.0 / 120.0 / 24.0
+        self.window.midi_clock_instance = fake_clock
         self.window.pitch_amount_spinbox.setValue(5.0)
-        self.window.pitch_up_button.click()
-        self.window.reset_precision_pitch()
-        self.assertEqual(self.window.precision_pitch_offset, 0.0)
-        self.assertEqual(self.window.pitch_label.text(), "Pitch: +0.0 ms")
+        self.window.pitch_up_button.click()   # Later  +5ms
+        fake_clock.adjust_phase.assert_called_once_with(5.0)
+        fake_clock.setBpm.assert_not_called()
+
+    def test_grid_shift_down_calls_adjust_phase_negative(self):
+        fake_clock = MagicMock()
+        fake_clock.is_alive.return_value = True
+        self.window.midi_clock_instance = fake_clock
+        self.window.pitch_amount_spinbox.setValue(10.0)
+        self.window.pitch_down_button.click()  # Earlier  -10ms
+        fake_clock.adjust_phase.assert_called_once_with(-10.0)
+
+    def test_grid_shift_no_clock_does_not_crash(self):
+        """Shifting with no clock running must be a silent no-op."""
+        self.window.midi_clock_instance = None
+        self.window.pitch_amount_spinbox.setValue(5.0)
+        self.window.pitch_up_button.click()  # should not raise
 
     # ------------------------------------------------------------------
     # Manual BPM mode
@@ -366,7 +368,7 @@ class TestMidiClockUI(unittest.TestCase):
 
         # Clock must NOT have been stopped
         fake_clock.stop.assert_not_called()
-        # setBpm must have been called with the new value
+                # setBpm must have been called with the new BPM (no pitch_offset arg)
         fake_clock.setBpm.assert_called_once()
         call_bpm = fake_clock.setBpm.call_args[0][0]
         self.assertAlmostEqual(call_bpm, 95.0, places=1)

@@ -187,7 +187,6 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_mode_active = False
         self.manual_bpm_value = 120.0
         self.tap_timestamps = []
-        self.precision_pitch_offset = 0.0
         self.last_prodj_beat_time = None
 
         # Auto phase correction state
@@ -202,6 +201,10 @@ class MidiClockMainWindow(QWidget):
         self._last_applied_bpm = None  # guards against redundant setBpm calls
         self.MidiClockImpl = None
         self._beat_snap_pending = False  # one-shot grid snap on next beat packet
+
+        # Sync Start count-in state
+        self._sync_start_pending = False   # waiting for bar beat 1
+        self._sync_start_countdown = 0     # beats remaining until bar beat 1
 
         # Phase-error sparkline history (shown in metrics panel)
         self._sparkline: List[float] = []
@@ -271,16 +274,19 @@ class MidiClockMainWindow(QWidget):
         self._led_off_timer.start(on_ms)
         self._refresh_metrics()
 
-    def adjust_precision_pitch(self, direction):
+    def adjust_grid_shift(self, direction):
+        """Pure phase shift — moves the beat grid without changing BPM."""
         amount = self.pitch_amount_spinbox.value()
-        self.precision_pitch_offset += amount * direction
-        self.pitch_label.setText(f"Pitch: {self.precision_pitch_offset:+.1f} ms")
-        self.update_midi_clock_source_logic()
-    
-    def reset_precision_pitch(self):
-        self.precision_pitch_offset = 0.0
-        self.pitch_label.setText("Pitch: +0.0 ms")
-        self.update_midi_clock_source_logic()
+        shift_ms = amount * direction
+        self.pitch_label.setText(f"Grid: {shift_ms:+.1f} ms")
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            self.midi_clock_instance.adjust_phase(shift_ms)
+        # Reset label after short delay so user sees the nudge amount
+        QTimer.singleShot(600, lambda: self.pitch_label.setText("Grid Shift"))
+
+    def reset_grid_shift(self):
+        """No accumulated state to reset — just show confirmation."""
+        self.pitch_label.setText("Grid Shift")
 
     def _on_source_radio_changed(self):
         """Called when the Clock Source radio buttons change (checked side only)."""
@@ -534,7 +540,7 @@ class MidiClockMainWindow(QWidget):
             return
         self._last_applied_bpm = bpm
         logging.info("setBpm BPM=%.2f", bpm)
-        self.midi_clock_instance.setBpm(bpm, self.precision_pitch_offset)
+        self.midi_clock_instance.setBpm(bpm)
 
     def _refresh_metrics(self) -> None:
         """Update the live metrics panel widgets.  Called on every MIDI beat,
@@ -955,58 +961,105 @@ class MidiClockMainWindow(QWidget):
 
         ctrl_grid.addLayout(mid_layout, 0, 1)
 
-        # ── Col 2: Precision Pitch ────────────────────────────────────────
-        pitch_group = QGroupBox("Precision Pitch (Speed)")
-        pitch_layout = QVBoxLayout()
-        pitch_layout.setContentsMargins(12, 8, 12, 10)
-        pitch_layout.setSpacing(12)
+        # ── Col 2: Sync Start/Stop + Grid Shift ──────────────────────────
+        right_col = QVBoxLayout()
+        right_col.setSpacing(8)
 
-        self.pitch_label = QLabel("Pitch: +0.0 ms")
-        pitch_label_font = self.pitch_label.font()
-        pitch_label_font.setBold(True)
-        pitch_label_font.setPointSize(28)
-        self.pitch_label.setFont(pitch_label_font)
-        self.pitch_label.setStyleSheet("color:#0ea5e9;")
+        # ── Sync Start / Stop ─────────────────────────────────────────────
+        sync_group = QGroupBox("Device Sync")
+        sync_layout = QVBoxLayout()
+        sync_layout.setContentsMargins(12, 8, 12, 10)
+        sync_layout.setSpacing(10)
+
+        # Count-in display
+        self._countdown_label = QLabel("—")
+        self._countdown_label.setAlignment(Qt.AlignCenter)
+        self._countdown_label.setStyleSheet(
+            "color:#f59e0b;font-size:42pt;font-weight:bold;"
+        )
+        sync_layout.addWidget(self._countdown_label)
+
+        self._sync_status_label = QLabel("Press Sync Start to begin count-in")
+        self._sync_status_label.setAlignment(Qt.AlignCenter)
+        self._sync_status_label.setWordWrap(True)
+        self._sync_status_label.setStyleSheet("color:#6b7280;font-size:9pt;")
+        sync_layout.addWidget(self._sync_status_label)
+
+        sync_btn_row = QHBoxLayout()
+        sync_btn_row.setSpacing(8)
+        self._sync_start_btn = QPushButton("Sync Start")
+        self._sync_start_btn.setMinimumHeight(60)
+        self._sync_start_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._sync_start_btn.setStyleSheet(
+            "QPushButton{background:#065f46;border:2px solid #10b981;"
+            "border-radius:8px;color:white;font-size:13pt;font-weight:bold;}"
+            "QPushButton:pressed{background:#047857;}"
+            "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
+        )
+        self._sync_start_btn.clicked.connect(self._on_sync_start_clicked)
+        sync_btn_row.addWidget(self._sync_start_btn)
+
+        self._sync_stop_btn = QPushButton("Stop")
+        self._sync_stop_btn.setMinimumHeight(60)
+        self._sync_stop_btn.setFixedWidth(90)
+        self._sync_stop_btn.setStyleSheet(
+            "QPushButton{background:#450a0a;border:2px solid #ef4444;"
+            "border-radius:8px;color:white;font-size:13pt;font-weight:bold;}"
+            "QPushButton:pressed{background:#dc2626;}"
+            "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
+        )
+        self._sync_stop_btn.clicked.connect(self._on_sync_stop_clicked)
+        sync_btn_row.addWidget(self._sync_stop_btn)
+        sync_layout.addLayout(sync_btn_row)
+
+        sync_group.setLayout(sync_layout)
+        right_col.addWidget(sync_group)
+
+        # ── Grid Shift (pure phase nudge, no BPM change) ──────────────────
+        shift_group = QGroupBox("Grid Shift (Phase Only)")
+        shift_layout = QVBoxLayout()
+        shift_layout.setContentsMargins(12, 8, 12, 10)
+        shift_layout.setSpacing(10)
+
+        self.pitch_label = QLabel("Grid Shift")
         self.pitch_label.setAlignment(Qt.AlignCenter)
-        pitch_layout.addWidget(self.pitch_label)
+        self.pitch_label.setStyleSheet("color:#0ea5e9;font-size:16pt;font-weight:bold;")
+        shift_layout.addWidget(self.pitch_label)
 
-        pitch_btn_row = QHBoxLayout()
-        pitch_btn_row.setSpacing(8)
-        self.pitch_down_button = QPushButton("-")
-        self.pitch_down_button.setMinimumHeight(60)
+        shift_btn_row = QHBoxLayout()
+        shift_btn_row.setSpacing(8)
+        self.pitch_down_button = QPushButton("◀  Earlier")
+        self.pitch_down_button.setMinimumHeight(52)
         self.pitch_down_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.pitch_down_button.clicked.connect(lambda: self.adjust_precision_pitch(-1))
-        pitch_btn_row.addWidget(self.pitch_down_button)
-        self.pitch_up_button = QPushButton("+")
-        self.pitch_up_button.setMinimumHeight(60)
+        self.pitch_down_button.clicked.connect(lambda: self.adjust_grid_shift(-1))
+        shift_btn_row.addWidget(self.pitch_down_button)
+        self.pitch_up_button = QPushButton("Later  ▶")
+        self.pitch_up_button.setMinimumHeight(52)
         self.pitch_up_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.pitch_up_button.clicked.connect(lambda: self.adjust_precision_pitch(1))
-        pitch_btn_row.addWidget(self.pitch_up_button)
-        pitch_layout.addLayout(pitch_btn_row)
+        self.pitch_up_button.clicked.connect(lambda: self.adjust_grid_shift(1))
+        shift_btn_row.addWidget(self.pitch_up_button)
+        shift_layout.addLayout(shift_btn_row)
 
-        reset_row = QHBoxLayout()
-        reset_row.setSpacing(8)
-        reset_button = QPushButton("Reset")
-        reset_button.setFixedWidth(80)
-        reset_button.clicked.connect(self.reset_precision_pitch)
-        reset_row.addWidget(reset_button)
+        step_row = QHBoxLayout()
+        step_row.setSpacing(8)
         lbl_step = QLabel("Step:")
         lbl_step.setStyleSheet("color:#9ca3af;")
         lbl_step.setFixedWidth(36)
         lbl_step.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        reset_row.addWidget(lbl_step)
+        step_row.addWidget(lbl_step)
         self.pitch_amount_spinbox = QDoubleSpinBox()
-        self.pitch_amount_spinbox.setRange(0.1, 10.0)
+        self.pitch_amount_spinbox.setRange(0.1, 50.0)
         self.pitch_amount_spinbox.setSingleStep(0.1)
         self.pitch_amount_spinbox.setSuffix(" ms")
-        self.pitch_amount_spinbox.setValue(1.0)
+        self.pitch_amount_spinbox.setValue(5.0)
         self.pitch_amount_spinbox.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        reset_row.addWidget(self.pitch_amount_spinbox)
-        pitch_layout.addLayout(reset_row)
+        step_row.addWidget(self.pitch_amount_spinbox)
+        shift_layout.addLayout(step_row)
 
-        pitch_layout.addStretch()
-        pitch_group.setLayout(pitch_layout)
-        ctrl_grid.addWidget(pitch_group, 0, 2)
+        shift_group.setLayout(shift_layout)
+        right_col.addWidget(shift_group)
+
+        ctrl_grid.addLayout(right_col, 0, 2)
 
         controls_layout.addLayout(ctrl_grid, stretch=1)
 
@@ -1225,7 +1278,7 @@ class MidiClockMainWindow(QWidget):
                 # Seed BPM directly before the thread starts — _apply_bpm is a
                 # no-op until is_alive() is True, so we call setBpm explicitly here.
                 seed_bpm = self._resolve_bpm_for_seed()
-                self.midi_clock_instance.setBpm(seed_bpm, self.precision_pitch_offset)
+                self.midi_clock_instance.setBpm(seed_bpm)
                 self.midi_clock_instance.start()
                 self._beat_snap_pending = True  # snap grid on first CDJ beat
                 logging.info("MIDI clock started on '%s' at %.2f BPM",
@@ -1260,6 +1313,56 @@ class MidiClockMainWindow(QWidget):
             self._refresh_metrics()
         self.update_global_status_label()
 
+    def _on_sync_start_clicked(self):
+        """User pressed Sync Start — arm the count-in, fire 0xFA on next bar beat 1."""
+        if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
+            self._sync_status_label.setText("Start the MIDI clock first.")
+            self._sync_status_label.setStyleSheet("color:#ef4444;font-size:9pt;")
+            return
+        if self._sync_start_pending:
+            # Cancel pending count-in
+            self._sync_start_pending = False
+            self._sync_start_countdown = 0
+            self._countdown_label.setText("—")
+            self._sync_status_label.setText("Count-in cancelled.")
+            self._sync_status_label.setStyleSheet("color:#6b7280;font-size:9pt;")
+            self._sync_start_btn.setText("Sync Start")
+            return
+        self._sync_start_pending = True
+        self._sync_start_btn.setText("Cancel")
+        self._sync_status_label.setText("Waiting for bar beat 1…")
+        self._sync_status_label.setStyleSheet("color:#f59e0b;font-size:9pt;")
+        # Show how many beats until next bar beat 1
+        beats_left = self._beats_until_bar_one()
+        self._sync_start_countdown = beats_left
+        self._countdown_label.setText(str(beats_left) if beats_left > 0 else "►")
+        logging.info("Sync Start armed — %d beats until bar beat 1.", beats_left)
+
+    def _on_sync_stop_clicked(self):
+        """Send MIDI Stop (0xFC) immediately."""
+        self._sync_start_pending = False
+        self._sync_start_countdown = 0
+        self._countdown_label.setText("—")
+        self._sync_start_btn.setText("Sync Start")
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            if hasattr(self.midi_clock_instance, 'send_stop'):
+                self.midi_clock_instance.send_stop()
+        self._sync_status_label.setText("Device stopped.")
+        self._sync_status_label.setStyleSheet("color:#ef4444;font-size:9pt;")
+        logging.info("Sync Stop sent.")
+
+    def _beats_until_bar_one(self) -> int:
+        """Return how many beats remain until the next bar beat 1 (beat_number == 1).
+        A bar is 4 beats. beat_number from CDJ is 1-based within the bar (1..4).
+        Returns 0 if we are already on beat 1."""
+        bn = self._last_beat_number
+        if bn <= 0:
+            return 4  # no beat received yet, assume full bar
+        beat_in_bar = ((bn - 1) % 4) + 1  # 1..4
+        if beat_in_bar == 1:
+            return 4  # just fired beat 1, next bar is 4 beats away
+        return 4 - (beat_in_bar - 1)  # beats remaining to complete the bar
+
     def handle_prodj_beat(self, player_number: int, beat_number: int) -> None:
         """Track the beat timestamp and bar position for the active source."""
         active_source = self._get_active_source_player_number()
@@ -1267,6 +1370,31 @@ class MidiClockMainWindow(QWidget):
             self.last_prodj_beat_time = time.time()
             self._last_beat_number = beat_number
             self._last_beat_player = player_number
+
+            # ── Sync Start count-in ──────────────────────────────────────
+            if self._sync_start_pending:
+                beat_in_bar = ((beat_number - 1) % 4) + 1
+                if beat_in_bar == 1:
+                    # This IS bar beat 1 — fire Start
+                    self._sync_start_pending = False
+                    self._sync_start_countdown = 0
+                    self._countdown_label.setText("►")
+                    self._sync_status_label.setText("Device running — in sync!")
+                    self._sync_status_label.setStyleSheet(
+                        "color:#10b981;font-size:9pt;font-weight:bold;"
+                    )
+                    self._sync_start_btn.setText("Sync Start")
+                    if hasattr(self.midi_clock_instance, 'send_start'):
+                        self.midi_clock_instance.send_start()
+                    logging.info("Sync Start fired on bar beat 1.")
+                    # Flash countdown back to dash after 2s
+                    QTimer.singleShot(2000, lambda: self._countdown_label.setText("—"))
+                else:
+                    # Count down
+                    beats_left = 4 - (beat_in_bar - 1)
+                    self._sync_start_countdown = beats_left
+                    self._countdown_label.setText(str(beats_left))
+                    logging.debug("Count-in: %d beats to bar 1.", beats_left)
 
     def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
         """Called on every beat packet from the CDJ with exact next_beat distance in ms.

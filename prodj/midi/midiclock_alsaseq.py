@@ -146,15 +146,28 @@ class MidiClock(Thread):
 
   def adjust_phase(self, ms):
     """Shifts the MIDI clock grid by ms milliseconds (positive = later, negative = sooner)."""
-    delta_ns = int(ms * 1_000_000)
-    self.time_ns += delta_ns
-    while self.time_ns >= 1_000_000_000:
-      self.time_s += 1
-      self.time_ns -= 1_000_000_000
-    while self.time_ns < 0:
-      self.time_s -= 1
-      self.time_ns += 1_000_000_000
+    with self._bpm_lock:
+      delta_ns = int(ms * 1_000_000)
+      self.time_ns += delta_ns
+      while self.time_ns >= 1_000_000_000:
+        self.time_s += 1
+        self.time_ns -= 1_000_000_000
+      while self.time_ns < 0:
+        self.time_s -= 1
+        self.time_ns += 1_000_000_000
     logging.debug("alsaseq: phase adjusted %.3f ms (time %d.%09d)", ms, self.time_s, self.time_ns)
+
+  def send_start(self):
+    """Send MIDI Start (0xFA) — tells slaved devices to begin playback from position 0."""
+    # ALSA sequencer event type 10 = SND_SEQ_EVENT_START
+    alsaseq.output((10, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), None))
+    logging.info("alsaseq: MIDI Start (0xFA) sent")
+
+  def send_stop(self):
+    """Send MIDI Stop (0xFC) — tells slaved devices to stop playback."""
+    # ALSA sequencer event type 12 = SND_SEQ_EVENT_STOP
+    alsaseq.output((12, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), None))
+    logging.info("alsaseq: MIDI Stop (0xFC) sent")
 
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')

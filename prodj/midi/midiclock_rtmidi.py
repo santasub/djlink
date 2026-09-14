@@ -207,6 +207,18 @@ class MidiClock(Thread):
     self._phase_offset_s += ms / 1000.0
     logging.debug("rtmidi: phase nudge scheduled: %.3f ms", ms)
 
+  def send_start(self):
+    """Send MIDI Start (0xFA) — tells slaved devices to begin playback from position 0."""
+    if self.midiout:
+      self.midiout.send_message([0xFA])
+      logging.info("rtmidi: MIDI Start (0xFA) sent")
+
+  def send_stop(self):
+    """Send MIDI Stop (0xFC) — tells slaved devices to stop playback."""
+    if self.midiout:
+      self.midiout.send_message([0xFC])
+      logging.info("rtmidi: MIDI Stop (0xFC) sent")
+
 if __name__ == "__main__":
   logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
   mc = MidiClock("CH345:CH345 MIDI 1 28:0")
