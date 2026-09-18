@@ -415,7 +415,7 @@ class LauncherWindow(QWidget):
         self.hide()
 
     def _app_finished(self, exit_code, _status):
-        self.show()
+        self.showFullScreen()
         self._build_iface_buttons()  # refresh — interface may have changed
         self._set_status(
             f"App exited (code {exit_code}).",
@@ -501,7 +501,7 @@ class LauncherWindow(QWidget):
         if not os.path.exists(python):
             python = sys.executable
         script = os.path.join(_REPO_DIR, "launcher.py")
-        QProcess.startDetached(python, [script])
+        QProcess.startDetached(python, [script, "--fullscreen"])
         QApplication.quit()
 
     def _close_log(self):

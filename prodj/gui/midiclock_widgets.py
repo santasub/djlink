@@ -971,22 +971,22 @@ class MidiClockMainWindow(QWidget):
 
         # ── Col 2: Sync Start/Stop + Grid Shift ──────────────────────────
         right_col = QVBoxLayout()
-        right_col.setSpacing(8)
+        right_col.setSpacing(4)
 
         # ── Device Sync ───────────────────────────────────────────────────
         sync_group = QGroupBox("Device Sync")
         sync_layout = QVBoxLayout()
-        sync_layout.setContentsMargins(12, 8, 12, 10)
-        sync_layout.setSpacing(8)
+        sync_layout.setContentsMargins(6, 4, 6, 6)
+        sync_layout.setSpacing(4)
 
         # Countdown + status row
         countdown_row = QHBoxLayout()
         countdown_row.setSpacing(10)
         self._countdown_label = QLabel("—")
-        self._countdown_label.setFixedSize(70, 70)
+        self._countdown_label.setFixedSize(48, 48)
         self._countdown_label.setAlignment(Qt.AlignCenter)
         self._countdown_label.setStyleSheet(
-            "color:#f59e0b;font-size:32pt;font-weight:bold;"
+            "color:#f59e0b;font-size:26pt;font-weight:bold;"
             "background:#1c1917;border:2px solid #44403c;border-radius:8px;"
         )
         countdown_row.addWidget(self._countdown_label)
@@ -998,11 +998,11 @@ class MidiClockMainWindow(QWidget):
 
         # Start button — full width, big
         self._sync_start_btn = QPushButton("▶   Start & Sync")
-        self._sync_start_btn.setMinimumHeight(70)
+        self._sync_start_btn.setMinimumHeight(44)
         self._sync_start_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sync_start_btn.setStyleSheet(
             "QPushButton{background:#065f46;border:2px solid #10b981;"
-            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
+            "border-radius:8px;color:white;font-size:11pt;font-weight:bold;}"
             "QPushButton:pressed{background:#047857;}"
             "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
         )
@@ -1011,11 +1011,11 @@ class MidiClockMainWindow(QWidget):
 
         # Stop button — full width
         self._sync_stop_btn = QPushButton("■   Stop")
-        self._sync_stop_btn.setMinimumHeight(56)
+        self._sync_stop_btn.setMinimumHeight(38)
         self._sync_stop_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sync_stop_btn.setStyleSheet(
             "QPushButton{background:#450a0a;border:2px solid #ef4444;"
-            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
+            "border-radius:8px;color:white;font-size:11pt;font-weight:bold;}"
             "QPushButton:pressed{background:#dc2626;}"
             "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
         )
@@ -1029,18 +1029,18 @@ class MidiClockMainWindow(QWidget):
         # ── Auto Sync ─────────────────────────────────────────────────────
         autosync_group = QGroupBox("Auto Sync")
         autosync_layout = QVBoxLayout()
-        autosync_layout.setContentsMargins(12, 8, 12, 10)
-        autosync_layout.setSpacing(8)
+        autosync_layout.setContentsMargins(6, 4, 6, 6)
+        autosync_layout.setSpacing(4)
 
         self.auto_sync_button = QPushButton("Auto Sync: OFF")
         self.auto_sync_button.setCheckable(True)
         self.auto_sync_button.setChecked(False)
         self.auto_phase_correction_enabled = False
-        self.auto_sync_button.setMinimumHeight(52)
+        self.auto_sync_button.setMinimumHeight(38)
         self.auto_sync_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.auto_sync_button.setStyleSheet(
             "QPushButton{background:#1f2937;border:2px solid #374151;"
-            "border-radius:8px;color:#6b7280;font-size:13pt;font-weight:bold;}"
+            "border-radius:8px;color:#6b7280;font-size:10pt;font-weight:bold;}"
             "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
             "stop:0 #065f46,stop:1 #047857);"
             "border:2px solid #10b981;color:white;}"
@@ -1070,22 +1070,22 @@ class MidiClockMainWindow(QWidget):
         # ── Grid Shift (pure phase nudge, no BPM change) ──────────────────
         shift_group = QGroupBox("Grid Shift (Phase Only)")
         shift_layout = QVBoxLayout()
-        shift_layout.setContentsMargins(12, 8, 12, 10)
-        shift_layout.setSpacing(8)
+        shift_layout.setContentsMargins(6, 4, 6, 6)
+        shift_layout.setSpacing(4)
 
         # Row 1: full-width Earlier and Later buttons — no spinbox in between
         shift_btn_row = QHBoxLayout()
         shift_btn_row.setSpacing(8)
         self.pitch_down_button = QPushButton("◀  Earlier")
-        self.pitch_down_button.setMinimumHeight(56)
+        self.pitch_down_button.setMinimumHeight(38)
         self.pitch_down_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.pitch_down_button.setStyleSheet("font-size:13pt;font-weight:bold;")
+        self.pitch_down_button.setStyleSheet("font-size:10pt;font-weight:bold;")
         self.pitch_down_button.clicked.connect(lambda: self.adjust_grid_shift(-1))
         shift_btn_row.addWidget(self.pitch_down_button)
         self.pitch_up_button = QPushButton("Later  ▶")
-        self.pitch_up_button.setMinimumHeight(56)
+        self.pitch_up_button.setMinimumHeight(38)
         self.pitch_up_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.pitch_up_button.setStyleSheet("font-size:13pt;font-weight:bold;")
+        self.pitch_up_button.setStyleSheet("font-size:10pt;font-weight:bold;")
         self.pitch_up_button.clicked.connect(lambda: self.adjust_grid_shift(1))
         shift_btn_row.addWidget(self.pitch_up_button)
         shift_layout.addLayout(shift_btn_row)
@@ -1576,6 +1576,7 @@ class MidiClockMainWindow(QWidget):
             "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
         )
         self._sync_stop_btn.setEnabled(False)
+        self._sync_start_btn.setEnabled(True)
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             if hasattr(self.midi_clock_instance, 'send_stop'):
                 self.midi_clock_instance.send_stop()
