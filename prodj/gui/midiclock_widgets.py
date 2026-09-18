@@ -195,6 +195,7 @@ class MidiClockMainWindow(QWidget):
         self.phase_correction_strength = 0.4  # 0.0-1.0, how aggressively we correct
         self.phase_error_history = []      # rolling history for smoothing
         self.PHASE_HISTORY_LEN = 4
+        self._grid_offset_ms = 0.0         # persistent manual offset, survives auto-sync corrections
 
         self.midi_clock_instance = None  # AlsaMidiClock or RtMidiClock
         self.preferred_midi_backend = None  # "ALSA" or "rtmidi"
@@ -281,15 +282,38 @@ class MidiClockMainWindow(QWidget):
             btn.setChecked(v == val)
 
     def adjust_grid_shift(self, direction):
-        """Pure phase shift — moves the beat grid without changing BPM."""
+        """Accumulate a persistent manual grid offset and apply it immediately.
+        Works in both Auto-Sync ON and OFF modes — the offset is re-applied
+        every beat by handle_prodj_beat_timing so Auto-Sync cannot wash it out.
+        """
         shift_ms = self._step_ms * direction
+        self._grid_offset_ms += shift_ms
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             self.midi_clock_instance.adjust_phase(shift_ms)
-            self.pitch_label.setText(f"{shift_ms:+d} ms")
-            QTimer.singleShot(800, lambda: self.pitch_label.setText("◀  Grid Shift  ▶"))
+        # Brief flash showing the step that was just applied
+        self.pitch_label.setText(f"{shift_ms:+d} ms")
+        QTimer.singleShot(600, lambda: self.pitch_label.setText(""))
+        self._update_offset_display()
 
     def reset_grid_shift(self):
-        self.pitch_label.setText("◀  Grid Shift  ▶")
+        """Clear the persistent manual offset and re-snap the grid on next beat."""
+        self._grid_offset_ms = 0.0
+        self._beat_snap_pending = True   # hard snap on next CDJ beat resets any residual drift
+        self.pitch_label.setText("")
+        self._update_offset_display()
+
+    def _update_offset_display(self):
+        """Refresh the persistent offset display widget."""
+        val = self._grid_offset_ms
+        self._offset_display.setText(f"{val:+.0f} ms")
+        if val == 0.0:
+            color = "#10b981"  # green — no offset
+        else:
+            color = "#f59e0b"  # amber — offset active
+        self._offset_display.setStyleSheet(
+            f"color:{color};font-size:14pt;font-weight:bold;"
+            "background:#1e1e1e;border:1px solid #2d2d2d;border-radius:5px;"
+        )
 
     def _on_source_radio_changed(self):
         """Called when the Clock Source radio buttons change (checked side only)."""
@@ -304,6 +328,7 @@ class MidiClockMainWindow(QWidget):
             logging.info("Source: Locked to Player %d", player_num)
         self.phase_error_history.clear()
         self._sparkline.clear()
+        self._grid_offset_ms = 0.0     # reset manual offset on source change
         self._beat_snap_pending = True  # re-snap grid to new source
         self.update_midi_clock_source_logic()
         self._update_active_source_label()
@@ -344,7 +369,10 @@ class MidiClockMainWindow(QWidget):
             self.auto_sync_button.setText("Auto Sync: ON")
             self.phase_error_history.clear()
             self._sparkline.clear()
-            logging.info("Auto phase correction enabled.")
+            # Re-snap so the existing _grid_offset_ms is honoured from the start
+            self._beat_snap_pending = True
+            logging.info("Auto phase correction enabled (grid offset %.1f ms).",
+                         self._grid_offset_ms)
         else:
             self.auto_sync_button.setText("Auto Sync: OFF")
             self.phase_error_ms = 0.0
@@ -1067,10 +1095,39 @@ class MidiClockMainWindow(QWidget):
         self.pitch_amount_spinbox.setValue(5.0)
         self.pitch_amount_spinbox.setVisible(False)
 
-        self.pitch_label = QLabel("◀  Grid Shift  ▶")
+        # Row 3: last-nudge flash label
+        self.pitch_label = QLabel("")
         self.pitch_label.setAlignment(Qt.AlignCenter)
-        self.pitch_label.setStyleSheet("color:#0ea5e9;font-size:11pt;font-weight:bold;")
+        self.pitch_label.setStyleSheet("color:#0ea5e9;font-size:10pt;")
+        self.pitch_label.setFixedHeight(20)
         shift_layout.addWidget(self.pitch_label)
+
+        # Row 4: persistent offset display + reset button
+        offset_row = QHBoxLayout()
+        offset_row.setSpacing(6)
+        offset_lbl = QLabel("Offset:")
+        offset_lbl.setStyleSheet("color:#9ca3af;font-size:9pt;")
+        offset_lbl.setFixedWidth(46)
+        offset_row.addWidget(offset_lbl)
+        self._offset_display = QLabel("+0 ms")
+        self._offset_display.setAlignment(Qt.AlignCenter)
+        self._offset_display.setStyleSheet(
+            "color:#10b981;font-size:14pt;font-weight:bold;"
+            "background:#1e1e1e;border:1px solid #2d2d2d;border-radius:5px;"
+        )
+        self._offset_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._offset_display.setFixedHeight(36)
+        offset_row.addWidget(self._offset_display)
+        self._grid_reset_button = QPushButton("Reset")
+        self._grid_reset_button.setFixedWidth(60)
+        self._grid_reset_button.setFixedHeight(36)
+        self._grid_reset_button.setStyleSheet(
+            "QPushButton{font-size:9pt;background:#450a0a;border:1px solid #ef4444;}"
+            "QPushButton:pressed{background:#dc2626;}"
+        )
+        self._grid_reset_button.clicked.connect(self.reset_grid_shift)
+        offset_row.addWidget(self._grid_reset_button)
+        shift_layout.addLayout(offset_row)
 
         shift_group.setLayout(shift_layout)
         right_col.addWidget(shift_group)
@@ -1434,15 +1491,16 @@ class MidiClockMainWindow(QWidget):
             self._beat_snap_pending = False
             beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
             if beat_period_ms > 0:
-                # How far is the next CDJ beat from now vs. our next MIDI beat?
+                # Snap to CDJ grid, then shift by the persistent manual offset
                 snap_ms = next_beat_ms - beat_period_ms
                 # Wrap to ±half period
                 while snap_ms > beat_period_ms / 2:
                     snap_ms -= beat_period_ms
                 while snap_ms < -beat_period_ms / 2:
                     snap_ms += beat_period_ms
-                self.midi_clock_instance.adjust_phase(snap_ms)
-                logging.info("Beat grid snap on start: %.1f ms", snap_ms)
+                self.midi_clock_instance.adjust_phase(snap_ms + self._grid_offset_ms)
+                logging.info("Beat grid snap on start: %.1f ms (+ offset %.1f ms)",
+                             snap_ms, self._grid_offset_ms)
             return  # skip normal phase correction this beat
 
         if not self.auto_phase_correction_enabled:
@@ -1475,8 +1533,11 @@ class MidiClockMainWindow(QWidget):
             self.phase_error_history.pop(0)
         smoothed_error_ms = sum(self.phase_error_history) / len(self.phase_error_history)
 
-        # Apply a fraction of the error as correction
-        correction_ms = smoothed_error_ms * self.phase_correction_strength
+        # Apply a fraction of the raw phase error as correction.
+        # Subtract the manual offset from the measured error so Auto-Sync
+        # treats the user-chosen offset position as the new "zero" target.
+        corrected_error_ms = smoothed_error_ms - self._grid_offset_ms
+        correction_ms = corrected_error_ms * self.phase_correction_strength
 
         self.phase_error_ms = smoothed_error_ms
         self.midi_clock_instance.adjust_phase(correction_ms)

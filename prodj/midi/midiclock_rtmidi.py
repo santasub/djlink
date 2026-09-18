@@ -64,13 +64,13 @@ def list_ports():
 class MidiClock(Thread):
   def __init__(self):
     super().__init__(daemon=True)
-    self.keep_running = True
-    self._bpm_lock = threading.Lock()       # guards _delay and _delay_changed
+    self.keep_running = True    
+    self._bpm_lock = threading.Lock()       # guards _delay, _delay_changed, _phase_offset_s
     self._delay = 1.0                       # seconds per MIDI tick (set via setBpm)
     self._delay_changed = False             # flag: deadline must be re-anchored
     self.midiout = None                     # created in open() — no handle held before use
     self.beat_callback = None
-    self._phase_offset_s = 0.0  # one-shot phase nudge in seconds
+    self._phase_offset_s = 0.0  # accumulated phase nudge in seconds — access only under _bpm_lock
 
   @property
   def delay(self):
@@ -175,11 +175,12 @@ class MidiClock(Thread):
       else:
         next_deadline += current_delay
 
-      # Apply any pending phase nudge
-      phase = self._phase_offset_s
+            # Apply any pending phase nudge (consumed atomically under lock)
+      with self._bpm_lock:
+        phase = self._phase_offset_s
+        self._phase_offset_s = 0.0
       if phase != 0.0:
         next_deadline += phase
-        self._phase_offset_s = 0.0
         logging.debug("rtmidi: phase nudge applied: %.3f ms", phase * 1000)
 
       self._sleep_until(next_deadline)
@@ -203,8 +204,9 @@ class MidiClock(Thread):
 
   def adjust_phase(self, ms):
     """Shift the clock grid by ms milliseconds (positive=later, negative=earlier).
-    Thread-safe: the value is consumed atomically in the run loop."""
-    self._phase_offset_s += ms / 1000.0
+    Thread-safe: accumulated under _bpm_lock and consumed atomically in the run loop."""
+    with self._bpm_lock:
+      self._phase_offset_s += ms / 1000.0
     logging.debug("rtmidi: phase nudge scheduled: %.3f ms", ms)
 
   def send_start(self):
