@@ -54,12 +54,27 @@ class _WaveformZoomOverlay(QWidget):
         self.setGeometry(0, (gp.height() - H) // 2, gp.width(), H)
         self.setStyleSheet("background:#0d1117;")
         self.setCursor(Qt.PointingHandCursor)
+
+        # Close button top-right
+        close_btn = QPushButton("✕", self)
+        close_btn.setFixedSize(44, 44)
+        close_btn.move(gp.width() - 50, 4)
+        close_btn.setStyleSheet(
+            "QPushButton{background:#1f2937;border:1px solid #374151;"
+            "border-radius:6px;color:#9ca3af;font-size:14pt;font-weight:bold;}"
+            "QPushButton:pressed{background:#374151;}"
+        )
+        close_btn.clicked.connect(self._close)
+
         self.raise_()
         self.show()
 
-    def mousePressEvent(self, _e):
+    def _close(self):
         self.hide()
         self.deleteLater()
+
+    def mousePressEvent(self, _e):
+        self._close()
 
     def _get_beats(self):
         if not self._beatgrid:
@@ -318,6 +333,65 @@ def _short_port_name(full_name: str) -> str:
         return full_name.split(':', 1)[0].strip()
     return full_name
 
+class _CompactPlayerBadge(QFrame):
+    """Compact ~42px player badge for the Now Playing panel."""
+    selected_signal = Signal(int)
+
+    def __init__(self, player_number, parent=None):
+        super().__init__(parent)
+        self.player_number = player_number
+        self.is_dropped = False
+        self.setFixedHeight(42)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setObjectName("PlayerFrame")
+        self.setCursor(Qt.PointingHandCursor)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 3, 6, 3)
+        lay.setSpacing(1)
+
+        row1 = QHBoxLayout()
+        row1.setSpacing(4)
+        self._num_label = QLabel(f"P{player_number}")
+        self._num_label.setStyleSheet("color:#6b7280;font-size:9pt;font-weight:bold;")
+        row1.addWidget(self._num_label)
+        self._state_led = QFrame()
+        self._state_led.setFixedSize(7, 7)
+        self._state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:3px;")
+        row1.addWidget(self._state_led)
+        row1.addStretch()
+        self._tag_label = QLabel("")
+        self._tag_label.setStyleSheet("color:#6b7280;font-size:7pt;")
+        row1.addWidget(self._tag_label)
+        lay.addLayout(row1)
+
+        self._bpm_label = QLabel("--.--")
+        self._bpm_label.setStyleSheet("color:#e5e7eb;font-size:11pt;font-weight:bold;")
+        self._bpm_label.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self._bpm_label)
+
+        self.mousePressEvent = lambda _e: self.selected_signal.emit(self.player_number)
+
+    def update_data(self, bpm, is_master, is_selected, play_state, is_dropped):
+        self.is_dropped = is_dropped
+        if is_dropped:
+            self._bpm_label.setText("--")
+            self._state_led.setStyleSheet(f"background:{_LED_RED};border-radius:3px;")
+            self._tag_label.setText("off")
+            self.setStyleSheet("QFrame#PlayerFrame{border:1px solid #ef4444;border-radius:6px;}")
+            return
+        self._bpm_label.setText(f"{bpm:.1f}" if isinstance(bpm, (float, int)) else "--")
+        led = _LED_GREEN if play_state == "playing" else (_LED_AMBER if play_state in ("paused","cued") else _LED_OFF)
+        self._state_led.setStyleSheet(f"background:{led};border-radius:3px;")
+        tags = []
+        if is_master:   tags.append("M")
+        if is_selected: tags.append("SRC")
+        self._tag_label.setText(" ".join(tags))
+        self._tag_label.setStyleSheet(f"color:{'#10b981' if tags else '#6b7280'};font-size:7pt;font-weight:bold;")
+        border = "#10b981" if is_selected else ("#0ea5e9" if is_master else "#374151")
+        self.setStyleSheet(f"QFrame#PlayerFrame{{border:1px solid {border};border-radius:6px;}}")
+
+
 class PlayerTileWidget(QFrame):
     """
     A widget to display information for a single player and allow selection.
@@ -447,6 +521,7 @@ class MidiClockMainWindow(QWidget):
         self.prodj = prodj_instance
         self.signal_bridge = signal_bridge
         self.player_tiles = {} # player_number: PlayerTileWidget
+        self._compact_badges = {} # player_number: _CompactPlayerBadge (Now Playing panel)
         self.selected_player_source = None # Player number of the selected source
         self.coasting_bpm = None # Stores the BPM value when coasting
         self.last_known_good_bpm = 120.0 # Default if no BPM ever received
@@ -1532,6 +1607,35 @@ class MidiClockMainWindow(QWidget):
                 is_master="master" in client.state,
             )
             tile.set_selected_source(self.selected_player_source == pn)
+
+            # ── Compact badge in Now Playing panel ────────────────────
+            if pn not in self._compact_badges:
+                badge = _CompactPlayerBadge(pn)
+                badge.selected_signal.connect(self.handle_player_tile_selected)
+                self._compact_badges[pn] = badge
+                self.player_grid_layout.addWidget(badge, 0, grid_col)
+            else:
+                badge = self._compact_badges[pn]
+                bidx = self.player_grid_layout.indexOf(badge)
+                if bidx == -1:
+                    self.player_grid_layout.addWidget(badge, 0, grid_col)
+                else:
+                    br, bc, *_ = self.player_grid_layout.getItemPosition(bidx)
+                    if bc != grid_col:
+                        self.player_grid_layout.removeWidget(badge)
+                        self.player_grid_layout.addWidget(badge, 0, grid_col)
+            badge.update_data(
+                bpm=effective_bpm,
+                is_master="master" in client.state,
+                is_selected=self.selected_player_source == pn,
+                play_state=getattr(client, 'play_state', ''),
+                is_dropped=tile.is_dropped,
+            )
+
+        # Update dropped badges
+        for pn, badge in self._compact_badges.items():
+            if pn not in {c.player_number for c in sorted_clients}:
+                badge.update_data(0, False, False, '', True)
 
         self.update_global_status_label()
 
