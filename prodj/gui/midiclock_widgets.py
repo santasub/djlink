@@ -7,6 +7,7 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
                              QMessageBox, QDoubleSpinBox, QScrollArea)
 from qtpy.QtCore import Qt, Signal, QTimer
+from qtpy.QtGui import QColor, QPainter, QPixmap
 
 # MIDI Clock imports
 from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock, list_ports as rtmidi_list_ports
@@ -37,6 +38,83 @@ _LED_RED          = "#ef4444"   # large error
 _LED_RED_BORDER   = "#dc2626"
 _LED_OFF          = "#374151"   # inactive
 _LED_OFF_BORDER   = "#4b5563"
+
+
+class _PreviewWaveformWidget(QWidget):
+    """Dark-themed preview waveform + beatgrid for the Now Playing panel."""
+    _redraw = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = None
+        self._beatgrid = None
+        self._position = 0.0
+        self._pixmap = None
+        self._redraw.connect(self.update)
+        self.setMinimumWidth(100)
+
+    def setData(self, data, beatgrid=None):
+        self._data = data
+        self._beatgrid = beatgrid
+        self._pixmap = self._render()
+        self._redraw.emit()
+
+    def setPosition(self, pos: float):
+        if abs(pos - self._position) > 0.001:
+            self._position = max(0.0, min(1.0, pos))
+            self._redraw.emit()
+
+    def clear(self):
+        self._data = None
+        self._pixmap = None
+        self._beatgrid = None
+        self._position = 0.0
+        self._redraw.emit()
+
+    def _render(self):
+        if not self._data:
+            return None
+        W, H = 400, 52
+        px = QPixmap(W, H)
+        px.fill(QColor("#0d1117"))
+        p = QPainter(px)
+        data = self._data
+        cols = min(W, len(data) // 2)
+        mid = H // 2
+        for x in range(cols):
+            raw_h = data[2 * x] & 0x1f
+            white = data[2 * x + 1] & 0x07
+            r = g = 36 * white
+            b = 140 + 16 * white
+            bar_h = max(1, raw_h * mid // 31)
+            p.fillRect(x, mid - bar_h, 1, bar_h * 2, QColor(r, g, b))
+        p.fillRect(0, mid, W, 1, QColor("#374151"))
+        if self._beatgrid:
+            beats = self._beatgrid.get("beats", [])
+            if beats:
+                total_ms = beats[-1]["time"]
+                if total_ms > 0:
+                    for beat in beats:
+                        if beat.get("beat") == 1:
+                            bx = int(beat["time"] / total_ms * (W - 1))
+                            p.fillRect(bx, 0, 2, 7, QColor("#ef4444"))
+                            p.fillRect(bx, H - 7, 2, 7, QColor("#ef4444"))
+        p.end()
+        return px
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        W, H = self.width(), self.height()
+        if self._pixmap:
+            scaled = self._pixmap.scaled(W, H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            p.drawPixmap(0, 0, scaled)
+        else:
+            p.fillRect(0, 0, W, H, QColor("#0d1117"))
+            p.setPen(QColor("#374151"))
+            p.drawText(0, 0, W, H, Qt.AlignCenter, "No waveform")
+        nx = int(self._position * W)
+        p.fillRect(nx - 1, 0, 3, H, QColor(255, 255, 255, 180))
+        p.end()
 
 
 def _short_port_name(full_name: str) -> str:
@@ -483,13 +561,51 @@ class MidiClockMainWindow(QWidget):
         else:
             self._track_duration_label.setText("")
 
+        # Player badge font size fix for compact widget
+        self._track_player_label.setStyleSheet(
+            f"color:{badge_color};font-size:8pt;font-weight:bold;"
+        )
+        self._track_state_led.setStyleSheet(
+            f"background:{led_color};border-radius:4px;"
+        )
+
+        # Request waveform + beatgrid async — callback updates _waveform_widget
+        pn  = client.loaded_player_number
+        sl  = client.loaded_slot
+        tid = client.track_id
+        if tid and tid != 0:
+            def _wf_cb(request, _src_pn, _slot, _tid, data):
+                if data is None:
+                    return
+                def _get_beatgrid():
+                    try:
+                        return self.prodj.data.beatgrid_store[(pn, sl, tid)]
+                    except KeyError:
+                        return None
+                if request in ("color_preview_waveform", "preview_waveform"):
+                    self._waveform_widget.setData(data, beatgrid=_get_beatgrid())
+                elif request == "beatgrid":
+                    if self._waveform_widget._data is not None:
+                        self._waveform_widget.setData(
+                            self._waveform_widget._data, beatgrid=data
+                        )
+            self.prodj.data.get_color_preview_waveform(pn, sl, tid, _wf_cb)
+            self.prodj.data.get_beatgrid(pn, sl, tid, _wf_cb)
+
+        # Update waveform position from client
+        duration = getattr(client, "duration", None) or (dur if dur else None)
+        position = getattr(client, "position", None)
+        if position is not None and duration and duration > 0:
+            self._waveform_widget.setPosition(position / duration)
+
     def _set_track_info_empty(self) -> None:
         """Reset all track info bar widgets to their idle state."""
         self._track_player_label.setText("—")
-        self._track_player_label.setStyleSheet("color:#6b7280;font-size:9pt;font-weight:bold;")
-        self._track_state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:5px;")
+        self._track_player_label.setStyleSheet("color:#6b7280;font-size:8pt;font-weight:bold;")
+        self._track_state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:4px;")
         self._track_title_label.setText("No track")
         self._track_artist_label.setText("")
+        self._waveform_widget.clear()
         self._track_key_label.setText("")
         self._track_duration_label.setText("")
 
@@ -696,90 +812,7 @@ class MidiClockMainWindow(QWidget):
 
         main_layout.addLayout(toolbar)
 
-        # ── Player strip ~110px (4 tiles side by side) ────────────────────
-        self.player_grid_layout = QGridLayout()
-        self.player_grid_layout.setSpacing(6)
-        self.player_grid_layout.setAlignment(Qt.AlignTop)
-        for _col in range(4):
-            self.player_grid_layout.setColumnStretch(_col, 1)
-        main_layout.addLayout(self.player_grid_layout)
 
-        # ── Track info bar (master player) ──────────────────────────────
-        track_frame = QFrame()
-        track_frame.setObjectName("TrackFrame")
-        track_frame.setFixedHeight(44)
-        track_frame.setStyleSheet(
-            "QFrame#TrackFrame{"
-            "background:#1a1a2e;border:1px solid #2d2d4a;border-radius:6px;"
-            "}"
-        )
-        track_bar = QHBoxLayout(track_frame)
-        track_bar.setContentsMargins(12, 0, 12, 0)
-        track_bar.setSpacing(12)
-
-        # Player badge  e.g. "P1 ●"
-        self._track_player_label = QLabel("—")
-        self._track_player_label.setFixedWidth(40)
-        self._track_player_label.setStyleSheet(
-            "color:#6b7280;font-size:9pt;font-weight:bold;"
-        )
-        track_bar.addWidget(self._track_player_label)
-
-        # Play-state dot
-        self._track_state_led = QFrame()
-        self._track_state_led.setFixedSize(10, 10)
-        self._track_state_led.setStyleSheet(
-            f"background:{_LED_OFF};border-radius:5px;"
-        )
-        track_bar.addWidget(self._track_state_led)
-
-        # Title (bold, expands)
-        self._track_title_label = QLabel("No track")
-        self._track_title_label.setStyleSheet(
-            "color:#e5e7eb;font-size:11pt;font-weight:bold;"
-        )
-        self._track_title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._track_title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        track_bar.addWidget(self._track_title_label, stretch=3)
-
-        # Separator
-        sep1 = QLabel("—")
-        sep1.setStyleSheet("color:#374151;")
-        track_bar.addWidget(sep1)
-
-        # Artist
-        self._track_artist_label = QLabel("")
-        self._track_artist_label.setStyleSheet(
-            "color:#9ca3af;font-size:10pt;"
-        )
-        self._track_artist_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._track_artist_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        track_bar.addWidget(self._track_artist_label, stretch=2)
-
-        # Separator
-        sep2 = QLabel("—")
-        sep2.setStyleSheet("color:#374151;")
-        track_bar.addWidget(sep2)
-
-        # Key
-        self._track_key_label = QLabel("")
-        self._track_key_label.setFixedWidth(52)
-        self._track_key_label.setStyleSheet(
-            "color:#a78bfa;font-size:10pt;font-weight:bold;"
-        )
-        self._track_key_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-        track_bar.addWidget(self._track_key_label)
-
-        # Duration  e.g. "5:32"
-        self._track_duration_label = QLabel("")
-        self._track_duration_label.setFixedWidth(44)
-        self._track_duration_label.setStyleSheet(
-            "color:#6b7280;font-size:9pt;"
-        )
-        self._track_duration_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
-        track_bar.addWidget(self._track_duration_label)
-
-        main_layout.addWidget(track_frame)
 
         # ── Controls area (fills remaining ~530px) ────────────────────────
         controls_frame = QFrame()
@@ -798,19 +831,14 @@ class MidiClockMainWindow(QWidget):
         # ── Col 0: Clock Source ───────────────────────────────────────────
         source_group = QGroupBox("Clock Source")
         source_layout = QVBoxLayout()
-        source_layout.setContentsMargins(12, 8, 12, 10)
-        source_layout.setSpacing(10)
-
-        # Fix 2f: only fire _on_source_radio_changed when the radio becomes
-        # *checked* (not on uncheck), avoiding the double-fire that occurs
-        # because toggling one radio unchecks the other.
+        source_layout.setContentsMargins(8, 6, 8, 8)
+        source_layout.setSpacing(6)
         self.source_master_radio = QRadioButton("Follow Network Master")
         self.source_master_radio.setChecked(True)
         self.source_master_radio.toggled.connect(
             lambda checked: checked and self._on_source_radio_changed()
         )
         source_layout.addWidget(self.source_master_radio)
-
         player_row = QHBoxLayout()
         self.source_player_radio = QRadioButton("Lock to Player:")
         self.source_player_radio.toggled.connect(
@@ -820,24 +848,76 @@ class MidiClockMainWindow(QWidget):
         self.source_player_combo = QComboBox()
         self.source_player_combo.addItems(["1", "2", "3", "4"])
         self.source_player_combo.setEnabled(False)
-        self.source_player_combo.setFixedWidth(80)
+        self.source_player_combo.setFixedWidth(72)
         self.source_player_combo.currentIndexChanged.connect(
             self._on_source_player_combo_changed
         )
         player_row.addWidget(self.source_player_combo)
         player_row.addStretch()
         source_layout.addLayout(player_row)
-
-        source_layout.addStretch()
         self.active_source_label = QLabel("Waiting for CDJs...")
         self.active_source_label.setStyleSheet(
-            "color:#6b7280;font-weight:bold;padding:6px;"
+            "color:#6b7280;font-weight:bold;padding:4px;"
             "border:1px solid #374151;border-radius:6px;"
         )
         self.active_source_label.setWordWrap(True)
         source_layout.addWidget(self.active_source_label)
         source_group.setLayout(source_layout)
-        ctrl_grid.addWidget(source_group, 0, 0)
+
+        # Now Playing: player badges + waveform + track info
+        nowplaying_group = QGroupBox("Now Playing")
+        np_layout = QVBoxLayout()
+        np_layout.setContentsMargins(8, 6, 8, 8)
+        np_layout.setSpacing(4)
+        self.player_grid_layout = QGridLayout()
+        self.player_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.player_grid_layout.setSpacing(4)
+        for _col in range(4):
+            self.player_grid_layout.setColumnStretch(_col, 1)
+        np_layout.addLayout(self.player_grid_layout)
+        self._waveform_widget = _PreviewWaveformWidget()
+        self._waveform_widget.setFixedHeight(60)
+        self._waveform_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        np_layout.addWidget(self._waveform_widget)
+        track_bar = QHBoxLayout()
+        track_bar.setContentsMargins(0, 2, 0, 0)
+        track_bar.setSpacing(6)
+        self._track_state_led = QFrame()
+        self._track_state_led.setFixedSize(8, 8)
+        self._track_state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:4px;")
+        track_bar.addWidget(self._track_state_led)
+        self._track_player_label = QLabel("—")
+        self._track_player_label.setStyleSheet("color:#6b7280;font-size:8pt;font-weight:bold;")
+        self._track_player_label.setFixedWidth(20)
+        track_bar.addWidget(self._track_player_label)
+        self._track_title_label = QLabel("No track")
+        self._track_title_label.setStyleSheet("color:#e5e7eb;font-size:9pt;font-weight:bold;")
+        self._track_title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._track_title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        track_bar.addWidget(self._track_title_label, stretch=3)
+        self._track_artist_label = QLabel("")
+        self._track_artist_label.setStyleSheet("color:#9ca3af;font-size:8pt;")
+        self._track_artist_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._track_artist_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        track_bar.addWidget(self._track_artist_label, stretch=2)
+        self._track_key_label = QLabel("")
+        self._track_key_label.setStyleSheet("color:#a78bfa;font-size:8pt;font-weight:bold;")
+        self._track_key_label.setFixedWidth(38)
+        self._track_key_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        track_bar.addWidget(self._track_key_label)
+        self._track_duration_label = QLabel("")
+        self._track_duration_label.setStyleSheet("color:#6b7280;font-size:8pt;")
+        self._track_duration_label.setFixedWidth(34)
+        self._track_duration_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        track_bar.addWidget(self._track_duration_label)
+        np_layout.addLayout(track_bar)
+        nowplaying_group.setLayout(np_layout)
+
+        col0_layout = QVBoxLayout()
+        col0_layout.setSpacing(6)
+        col0_layout.addWidget(source_group)
+        col0_layout.addWidget(nowplaying_group, stretch=1)
+        ctrl_grid.addLayout(col0_layout, 0, 0)
 
         # ── Col 1: Grid Alignment + BPM Control (stacked) ────────────────
         mid_layout = QVBoxLayout()
@@ -973,6 +1053,7 @@ class MidiClockMainWindow(QWidget):
         # ── Col 2: Sync Start/Stop + Grid Shift ──────────────────────────
         right_col = QVBoxLayout()
         right_col.setSpacing(4)
+        right_col.setAlignment(Qt.AlignTop)
 
         # ── Device Sync ───────────────────────────────────────────────────
         sync_group = QGroupBox("Device Sync")
@@ -984,7 +1065,7 @@ class MidiClockMainWindow(QWidget):
         countdown_row = QHBoxLayout()
         countdown_row.setSpacing(10)
         self._countdown_label = QLabel("—")
-        self._countdown_label.setFixedSize(48, 48)
+        self._countdown_label.setFixedSize(40, 40)
         self._countdown_label.setAlignment(Qt.AlignCenter)
         self._countdown_label.setStyleSheet(
             "color:#f59e0b;font-size:26pt;font-weight:bold;"
@@ -999,7 +1080,7 @@ class MidiClockMainWindow(QWidget):
 
         # Start button — full width, big
         self._sync_start_btn = QPushButton("▶   Start & Sync")
-        self._sync_start_btn.setMinimumHeight(44)
+        self._sync_start_btn.setMinimumHeight(36)
         self._sync_start_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sync_start_btn.setStyleSheet(
             "QPushButton{background:#065f46;border:2px solid #10b981;"
@@ -1012,7 +1093,7 @@ class MidiClockMainWindow(QWidget):
 
         # Stop button — full width
         self._sync_stop_btn = QPushButton("■   Stop")
-        self._sync_stop_btn.setMinimumHeight(38)
+        self._sync_stop_btn.setMinimumHeight(32)
         self._sync_stop_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sync_stop_btn.setStyleSheet(
             "QPushButton{background:#450a0a;border:2px solid #ef4444;"
@@ -1037,7 +1118,7 @@ class MidiClockMainWindow(QWidget):
         self.auto_sync_button.setCheckable(True)
         self.auto_sync_button.setChecked(False)
         self.auto_phase_correction_enabled = False
-        self.auto_sync_button.setMinimumHeight(38)
+        self.auto_sync_button.setMinimumHeight(32)
         self.auto_sync_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.auto_sync_button.setStyleSheet(
             "QPushButton{background:#1f2937;border:2px solid #374151;"
@@ -1078,13 +1159,13 @@ class MidiClockMainWindow(QWidget):
         shift_btn_row = QHBoxLayout()
         shift_btn_row.setSpacing(8)
         self.pitch_down_button = QPushButton("◀  Earlier")
-        self.pitch_down_button.setMinimumHeight(38)
+        self.pitch_down_button.setMinimumHeight(32)
         self.pitch_down_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.pitch_down_button.setStyleSheet("font-size:10pt;font-weight:bold;")
         self.pitch_down_button.clicked.connect(lambda: self.adjust_grid_shift(-1))
         shift_btn_row.addWidget(self.pitch_down_button)
         self.pitch_up_button = QPushButton("Later  ▶")
-        self.pitch_up_button.setMinimumHeight(38)
+        self.pitch_up_button.setMinimumHeight(32)
         self.pitch_up_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.pitch_up_button.setStyleSheet("font-size:10pt;font-weight:bold;")
         self.pitch_up_button.clicked.connect(lambda: self.adjust_grid_shift(1))
@@ -1103,7 +1184,7 @@ class MidiClockMainWindow(QWidget):
             btn = QPushButton(f"{v} ms")
             btn.setCheckable(True)
             btn.setChecked(v == self._step_ms)
-            btn.setFixedHeight(32)
+            btn.setFixedHeight(26)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.clicked.connect(lambda checked, val=v: self._set_grid_step(val))
             step_row.addWidget(btn)
@@ -1119,7 +1200,7 @@ class MidiClockMainWindow(QWidget):
         self.pitch_label = QLabel("")
         self.pitch_label.setAlignment(Qt.AlignCenter)
         self.pitch_label.setStyleSheet("color:#0ea5e9;font-size:10pt;")
-        self.pitch_label.setFixedHeight(20)
+        self.pitch_label.setFixedHeight(16)
         shift_layout.addWidget(self.pitch_label)
 
         # Row 4: persistent offset display + reset button
@@ -1136,11 +1217,11 @@ class MidiClockMainWindow(QWidget):
             "background:#1e1e1e;border:1px solid #2d2d2d;border-radius:5px;"
         )
         self._offset_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self._offset_display.setFixedHeight(36)
+        self._offset_display.setFixedHeight(28)
         offset_row.addWidget(self._offset_display)
         self._grid_reset_button = QPushButton("Reset")
         self._grid_reset_button.setFixedWidth(60)
-        self._grid_reset_button.setFixedHeight(36)
+        self._grid_reset_button.setFixedHeight(28)
         self._grid_reset_button.setStyleSheet(
             "QPushButton{font-size:9pt;background:#450a0a;border:1px solid #ef4444;}"
             "QPushButton:pressed{background:#dc2626;}"
