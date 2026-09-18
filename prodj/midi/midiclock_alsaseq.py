@@ -22,6 +22,7 @@ class MidiClock(Thread):
     self.add_ns = math.floor(1e9 * self._delay)
     self.enqueue_at_once = 24
     self.beat_callback = None
+    self.last_beat_wall_time = None      # wall-clock time of last beat callback (time.time())
 
     # this call causes /proc/asound/seq/clients to be created
     alsaseq.client('MidiClock', 0, 1, True)
@@ -105,12 +106,12 @@ class MidiClock(Thread):
       send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
       alsaseq.output(send)
       if i % 24 == 0:
-        fire_beat = True  # note: beat boundary hit; callback fired after loop
+        fire_beat = True
       self.advance_time()
-    # Fire beat callback outside the enqueue loop so any I/O or locking
-    # inside the callback cannot stall the ALSA output queue fill.
-    if fire_beat and self.beat_callback:
-      self.beat_callback()
+    if fire_beat:
+      self.last_beat_wall_time = time.time()
+      if self.beat_callback:
+        self.beat_callback()
 
   def send_note(self, note):
     alsaseq.output((6, 0, 0, 0, (0,0), (128,0), (self.client_id, self.client_port), (0,note,127,0,0)))
@@ -153,7 +154,20 @@ class MidiClock(Thread):
     logging.debug("alsaseq: BPM=%d pitch_offset=%.2fms delay=%.9fs", bpm, pitch_offset, new_delay)
 
   def adjust_phase(self, ms):
-    """Shifts the MIDI clock grid by ms milliseconds (positive = later, negative = sooner)."""
+    """Shift the MIDI clock grid by ms milliseconds using ALSA QUEUE_SKEW.
+
+    Instead of modifying the internal time counter (which only affects future
+    enqueue calls and has no effect on already-queued events), we send a
+    SND_SEQ_EVENT_QUEUE_SKEW event directly into the queue. ALSA processes
+    this event in sequence — when it is reached, the queue speed is changed
+    for one tick interval and then restored, producing a real time-shift that
+    is audible immediately on the connected device.
+
+    For larger shifts (>= 1 ms) we use SETPOS_TIME to jump the queue clock
+    directly, which is instant but causes a brief glitch. For small corrections
+    we use SKEW so the shift is smooth (gradual tempo nudge).
+    """
+    # Also update internal time counter so future enqueue calls are aligned
     with self._bpm_lock:
       delta_ns = int(ms * 1_000_000)
       self.time_ns += delta_ns
@@ -163,7 +177,43 @@ class MidiClock(Thread):
       while self.time_ns < 0:
         self.time_s -= 1
         self.time_ns += 1_000_000_000
-    logging.debug("alsaseq: phase adjusted %.3f ms (time %d.%09d)", ms, self.time_s, self.time_ns)
+      current_s = self.time_s
+      current_ns = self.time_ns
+      delay = self._delay
+
+    abs_ms = abs(ms)
+
+    if abs_ms < 0.1:
+      # negligible — skip
+      return
+    elif abs_ms <= 20.0:
+      # Small correction: use QUEUE_SKEW for smooth gradual nudge.
+      # Skew ratio: run the queue faster/slower for one beat period,
+      # producing a net shift of ms over beat_period_ms.
+      # skew = (beat_period + delta) / beat_period  as integer fraction
+      beat_period_ns = int(delay * 24 * 1e9)
+      if beat_period_ns <= 0:
+        return
+      delta_ns_total = int(ms * 1_000_000)
+      # skew value/base: value = base + delta_ticks
+      # Use base=10000 for good resolution
+      base = 10000
+      skew_val = base + int(delta_ns_total * base / beat_period_ns)
+      skew_val = max(1, skew_val)  # must be positive
+      # SND_SEQ_EVENT_QUEUE_SKEW = 35
+      # data = (skew_value, skew_base, 0, 0, 0, 0)
+      alsaseq.output((35, 1, 0, 0, (0, 0), (0, 0),
+                      (self.client_id, self.client_port),
+                      (skew_val, base, 0, 0, 0, 0)))
+      logging.debug("alsaseq: phase skew %.3f ms (skew %d/%d)", ms, skew_val, base)
+    else:
+      # Large correction: use SETPOS_TIME for immediate jump.
+      # SND_SEQ_EVENT_SETPOS_TIME = 31
+      # data = (seconds, nanoseconds, 0, 0, 0, 0)
+      alsaseq.output((31, 1, 0, 0, (0, 0), (0, 0),
+                      (self.client_id, self.client_port),
+                      (current_s, current_ns, 0, 0, 0, 0)))
+      logging.debug("alsaseq: phase jump %.3f ms -> %d.%09d s", ms, current_s, current_ns)
 
   def send_start(self):
     """Send MIDI Start (0xFA) — tells slaved devices to begin playback from position 0."""

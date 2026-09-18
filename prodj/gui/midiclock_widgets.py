@@ -660,12 +660,19 @@ class MidiClockMainWindow(QWidget):
         )
         toolbar.addWidget(self.midi_led)
 
-        lbl_port = QLabel("MIDI Port:")
-        lbl_port.setStyleSheet("color:#9ca3af;")
-        toolbar.addWidget(lbl_port)
-        self.midi_port_combo = QComboBox()
-        self.midi_port_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        toolbar.addWidget(self.midi_port_combo, stretch=3)
+        self.midi_port_combo = QComboBox()   # hidden, keeps existing logic intact
+        self.midi_port_combo.setVisible(False)
+        self._midi_port_btn = QPushButton("Select MIDI Device")
+        self._midi_port_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._midi_port_btn.setMinimumHeight(36)
+        self._midi_port_btn.setStyleSheet(
+            "QPushButton{background:#1e3a5f;border:1px solid #0ea5e9;"
+            "border-radius:6px;color:#7dd3fc;font-weight:600;text-align:left;padding-left:10px;}"
+            "QPushButton:hover{background:#1e4976;}"
+            "QPushButton:disabled{background:#1f2937;color:#4b5563;border-color:#374151;}"
+        )
+        self._midi_port_btn.clicked.connect(self._open_midi_port_dialog)
+        toolbar.addWidget(self._midi_port_btn, stretch=3)
 
         self.start_stop_button = QPushButton("Start")
         self.start_stop_button.setCheckable(True)
@@ -1256,19 +1263,20 @@ class MidiClockMainWindow(QWidget):
             self.MidiClockImpl = None
 
     def populate_midi_ports(self) -> None:
+        """Enumerate available MIDI ports into the hidden combo and update the port button."""
         self.midi_port_combo.clear()
         self._determine_midi_backend()
 
         if self.MidiClockImpl is None:
             self.midi_port_combo.addItem("No MIDI Backend!")
-            self.midi_port_combo.setEnabled(False)
+            self._midi_port_btn.setText("No MIDI Backend")
+            self._midi_port_btn.setEnabled(False)
             self.start_stop_button.setEnabled(False)
             return
 
         try:
             ports: List[Tuple[str, Dict]] = []  # (display_name, open_kwargs)
             if self.MidiClockImpl == AlsaMidiClock:
-                # Enumerate via /proc without holding a WinMM handle
                 tmp = AlsaMidiClock.__new__(AlsaMidiClock)
                 tmp.__init__()
                 for client_id, name, port_ids in tmp.iter_alsa_seq_clients():
@@ -1282,20 +1290,104 @@ class MidiClockMainWindow(QWidget):
 
             if ports:
                 for full_label, kwargs in ports:
-                    # Display the short device name; store full kwargs as UserRole
                     short = _short_port_name(full_label)
                     self.midi_port_combo.addItem(short, userData=kwargs)
                 self.midi_port_combo.setEnabled(True)
+                self._midi_port_btn.setEnabled(True)
                 self.start_stop_button.setEnabled(True)
+                # Update button label to show current selection
+                self._refresh_port_button_label()
             else:
                 self.midi_port_combo.addItem("No MIDI Ports Found")
-                self.midi_port_combo.setEnabled(False)
+                self._midi_port_btn.setText("No MIDI Ports Found")
+                self._midi_port_btn.setEnabled(False)
                 self.start_stop_button.setEnabled(False)
         except Exception as exc:
             logging.error("Error listing MIDI ports: %s", exc, exc_info=True)
             self.midi_port_combo.addItem("Error listing ports")
-            self.midi_port_combo.setEnabled(False)
+            self._midi_port_btn.setText("Error listing ports")
+            self._midi_port_btn.setEnabled(False)
             self.start_stop_button.setEnabled(False)
+
+    def _refresh_port_button_label(self):
+        """Sync the port button label to the current combo selection."""
+        name = self.midi_port_combo.currentText()
+        self._midi_port_btn.setText(f"MIDI:  {name}" if name else "Select MIDI Device")
+
+    def _open_midi_port_dialog(self):
+        """Show a fullscreen-friendly touch dialog to pick the MIDI output port."""
+        count = self.midi_port_combo.count()
+        if count == 0:
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Select MIDI Output Device")
+        dlg.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        dlg.setFixedSize(800, 500)
+        dlg.setStyleSheet(
+            "QDialog{background:#111827;border:2px solid #0ea5e9;border-radius:14px;}"
+        )
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(16)
+
+        title = QLabel("Select MIDI Output Device")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("color:#7dd3fc;font-size:18pt;font-weight:bold;")
+        layout.addWidget(title)
+
+        # One big button per port
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea{border:none;background:transparent;}")
+        inner = QWidget()
+        inner.setStyleSheet("background:transparent;")
+        btn_layout = QVBoxLayout(inner)
+        btn_layout.setSpacing(10)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+
+        current_idx = self.midi_port_combo.currentIndex()
+        for i in range(count):
+            name = self.midi_port_combo.itemText(i)
+            btn = QPushButton(name)
+            btn.setMinimumHeight(72)
+            btn.setCheckable(True)
+            btn.setChecked(i == current_idx)
+            btn.setStyleSheet(
+                "QPushButton{"
+                "background:#1f2937;border:2px solid #374151;"
+                "border-radius:10px;color:#e5e7eb;"
+                "font-size:14pt;font-weight:600;text-align:left;padding-left:20px;}"
+                "QPushButton:hover{border:2px solid #0ea5e9;}"
+                "QPushButton:checked{"
+                "background:#0c4a6e;border:2px solid #0ea5e9;color:#7dd3fc;}"
+            )
+            btn.clicked.connect(lambda _, idx=i, d=dlg: self._select_midi_port(idx, d))
+            btn_layout.addWidget(btn)
+
+        btn_layout.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, stretch=1)
+
+        # Cancel button
+        cancel = QPushButton("Cancel")
+        cancel.setMinimumHeight(60)
+        cancel.setStyleSheet(
+            "QPushButton{background:#374151;border:2px solid #4b5563;"
+            "border-radius:10px;color:#e5e7eb;font-size:13pt;font-weight:700;}"
+            "QPushButton:pressed{background:#4b5563;}"
+        )
+        cancel.clicked.connect(dlg.reject)
+        layout.addWidget(cancel)
+
+        dlg.exec_()
+
+    def _select_midi_port(self, index: int, dlg: 'QDialog'):
+        """Select port by index, update combo + button label, close dialog."""
+        self.midi_port_combo.setCurrentIndex(index)
+        self._refresh_port_button_label()
+        dlg.accept()
 
 
     def _check_clock_crashed(self) -> bool:
@@ -1483,89 +1575,96 @@ class MidiClockMainWindow(QWidget):
         if player_number != active_source:
             return
 
-        # ── One-shot hard grid snap on clock start ────────────────────────
-        # On the first beat after the clock starts (or after a source change)
-        # we jump the phase directly to next_beat_ms so the MIDI grid locks
-        # instantly rather than drifting in over several beats.
+        # ── Wall-clock phase error ──────────────────────────────────────────
+        # We need the REAL time difference between our next MIDI beat and
+        # the next CDJ beat — both anchored to wall clock (time.time()).
+        #
+        # t_recv: wall time when this packet arrived (now)
+        # t_next_cdj:  t_recv + next_beat_ms/1000
+        #
+        # t_last_midi_beat: last time our MIDI clock fired a beat callback
+        # t_next_midi_beat: t_last_midi_beat + beat_period_s
+        #
+        # error = t_next_midi_beat - t_next_cdj
+        #   > 0: our next beat is LATER than CDJ  → we are BEHIND → nudge earlier (-)
+        #   < 0: our next beat is EARLIER than CDJ → we are AHEAD  → nudge later  (+)
+        beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
+        if beat_period_ms <= 0:
+            return
+
+        t_recv = time.time()
+        t_next_cdj = t_recv + next_beat_ms / 1000.0
+
+        t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
+        if t_last_midi is None:
+            # No beat fired yet — use snap approach for first beat
+            self._beat_snap_pending = True
+
         if self._beat_snap_pending:
             self._beat_snap_pending = False
-            beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
-            if beat_period_ms > 0:
-                # Snap to CDJ grid, then shift by the persistent manual offset
-                snap_ms = next_beat_ms - beat_period_ms
+            if t_last_midi is not None:
+                t_next_midi = t_last_midi + beat_period_ms / 1000.0
+                snap_ms = (t_next_cdj - t_next_midi) * 1000.0 + self._grid_offset_ms
                 # Wrap to ±half period
                 while snap_ms > beat_period_ms / 2:
                     snap_ms -= beat_period_ms
                 while snap_ms < -beat_period_ms / 2:
                     snap_ms += beat_period_ms
-                self.midi_clock_instance.adjust_phase(snap_ms + self._grid_offset_ms)
-                logging.info("Beat grid snap on start: %.1f ms (+ offset %.1f ms)",
+                self.midi_clock_instance.adjust_phase(snap_ms)
+                logging.info("Beat grid snap: %.1f ms (offset %.1f ms)",
                              snap_ms, self._grid_offset_ms)
-            return  # skip normal phase correction this beat
+            return
 
         if not self.auto_phase_correction_enabled:
             return
 
-        # next_beat_ms is the time (in ms) until the CDJ's next beat.
-        # Our MIDI clock delay per tick is self.midi_clock_instance.delay (in seconds).
-        # One MIDI beat = 24 ticks.
-        beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
-        if beat_period_ms <= 0:
+        if t_last_midi is None:
             return
 
-        # ── Phase error calculation ───────────────────────────────────────
-        # next_beat_ms: time (ms) from NOW until the CDJ's next beat.
-        # Our MIDI clock fires its next beat in (beat_period_ms - elapsed_since_last_tick) ms.
-        # We approximate: our next beat is in beat_period_ms ms from now.
-        #
-        # error > 0: CDJ next beat is LATER than our next beat  → we are AHEAD → nudge later (+)
-        # error < 0: CDJ next beat is EARLIER than our next beat → we are BEHIND → nudge earlier (-)
-        raw_error_ms = next_beat_ms - beat_period_ms
+        # Our next MIDI beat is one beat_period after the last one
+        t_next_midi = t_last_midi + beat_period_ms / 1000.0
 
-        # Compensate for ALSA queue lookahead: events are pre-queued N ticks ahead.
-        # adjust_phase shifts future queue entries, so our correction takes effect
-        # one queue-length from now. We need to account for this latency offset.
-        queue_latency_ms = 0.0
-        if hasattr(self.midi_clock_instance, 'queue_latency_ms'):
-            queue_latency_ms = self.midi_clock_instance.queue_latency_ms
-        raw_error_ms -= queue_latency_ms
+        # Positive error: our beat comes AFTER CDJ beat → we are behind → correct earlier
+        # Negative error: our beat comes BEFORE CDJ beat → we are ahead  → correct later
+        raw_error_ms = (t_next_midi - t_next_cdj) * 1000.0
 
-        # Wrap to ±half a beat period so we always take the shortest path
+        # Wrap to ±half period
         while raw_error_ms > beat_period_ms / 2:
             raw_error_ms -= beat_period_ms
         while raw_error_ms < -beat_period_ms / 2:
             raw_error_ms += beat_period_ms
 
-        # Apply manual grid offset: shift the target by _grid_offset_ms.
-        # e.g. offset=+10ms means we WANT our beat 10ms after the CDJ beat.
+        # Subtract manual offset: if user wants +10ms offset, we tolerate
+        # our beat being 10ms later than CDJ — so target error is 0 at +10ms
         target_error_ms = raw_error_ms - self._grid_offset_ms
 
-        # Smooth over last N beats to avoid overcorrecting on jitter
+        # Smooth over last N beats
         self.phase_error_history.append(target_error_ms)
         if len(self.phase_error_history) > self.PHASE_HISTORY_LEN:
             self.phase_error_history.pop(0)
         smoothed_error_ms = sum(self.phase_error_history) / len(self.phase_error_history)
 
-        # Apply a fraction of the smoothed error as correction each beat.
-        # strength=0.3 means we close 30% of the gap per beat — stable convergence.
-        correction_ms = smoothed_error_ms * self.phase_correction_strength
+        # Correction: negative error_ms means nudge earlier, positive means later.
+        # We apply a fraction per beat for smooth convergence.
+        # Note: adjust_phase(+ms) = later, adjust_phase(-ms) = earlier
+        # Our error is (our_beat - cdj_beat), so correction = -error * strength
+        correction_ms = -smoothed_error_ms * self.phase_correction_strength
 
-        self.phase_error_ms = raw_error_ms   # show raw error (without offset) in UI
+        self.phase_error_ms = raw_error_ms
         self.midi_clock_instance.adjust_phase(correction_ms)
 
-        # Update the sparkline history used by the metrics panel
+        # Update sparkline
         self._sparkline.append(round(raw_error_ms, 1))
         if len(self._sparkline) > _SPARKLINE_LEN:
             self._sparkline.pop(0)
 
         logging.debug(
-            "Phase correction: next_beat=%.1f ms beat_period=%.1f ms "
-            "queue_lat=%.1f ms raw_err=%.2f ms target_err=%.2f ms correction=%.2f ms",
-            next_beat_ms, beat_period_ms, queue_latency_ms,
+            "Phase: next_cdj=%.1f ms next_midi=%.1f ms raw_err=%.2f ms "
+            "smoothed=%.2f ms correction=%.2f ms",
+            next_beat_ms, (t_next_midi - t_recv) * 1000.0,
             raw_error_ms, smoothed_error_ms, correction_ms
         )
 
-        # Update phase error display in UI
         self._update_phase_error_display()
 
     def _get_active_source_player_number(self):
