@@ -90,15 +90,22 @@ class _PreviewWaveformWidget(QWidget):
             p.fillRect(x, mid - bar_h, 1, bar_h * 2, QColor(r, g, b))
         p.fillRect(0, mid, W, 1, QColor("#374151"))
         if self._beatgrid:
-            beats = self._beatgrid.get("beats", [])
-            if beats:
-                total_ms = beats[-1]["time"]
-                if total_ms > 0:
-                    for beat in beats:
-                        if beat.get("beat") == 1:
-                            bx = int(beat["time"] / total_ms * (W - 1))
-                            p.fillRect(bx, 0, 2, 7, QColor("#ef4444"))
-                            p.fillRect(bx, H - 7, 2, 7, QColor("#ef4444"))
+            try:
+                # beatgrid may be a ListContainer (construct) or a dict with 'beats'
+                if hasattr(self._beatgrid, 'get'):
+                    beats = self._beatgrid.get("beats", []) or []
+                else:
+                    beats = list(self._beatgrid)  # ListContainer — entries are beat dicts
+                if beats:
+                    total_ms = beats[-1]["time"]
+                    if total_ms > 0:
+                        for beat in beats:
+                            if beat.get("beat") == 1:
+                                bx = int(beat["time"] / total_ms * (W - 1))
+                                p.fillRect(bx, 0, 2, 7, QColor("#ef4444"))
+                                p.fillRect(bx, H - 7, 2, 7, QColor("#ef4444"))
+            except Exception as e:
+                logging.debug("Waveform beatgrid render error: %s", e)
         p.end()
         return px
 
@@ -574,21 +581,26 @@ class MidiClockMainWindow(QWidget):
         sl  = client.loaded_slot
         tid = client.track_id
         if tid and tid != 0:
+            def _get_beatgrid():
+                try:
+                    return self.prodj.data.beatgrid_store[(pn, sl, tid)]
+                except KeyError:
+                    return None
+
             def _wf_cb(request, _src_pn, _slot, _tid, data):
+                """Called from DataProvider thread — must post to GUI thread via QTimer."""
                 if data is None:
                     return
-                def _get_beatgrid():
-                    try:
-                        return self.prodj.data.beatgrid_store[(pn, sl, tid)]
-                    except KeyError:
-                        return None
                 if request in ("color_preview_waveform", "preview_waveform"):
-                    self._waveform_widget.setData(data, beatgrid=_get_beatgrid())
+                    bg = _get_beatgrid()
+                    QTimer.singleShot(0, lambda d=data, b=bg:
+                        self._waveform_widget.setData(d, beatgrid=b))
                 elif request == "beatgrid":
-                    if self._waveform_widget._data is not None:
+                    QTimer.singleShot(0, lambda b=data: (
                         self._waveform_widget.setData(
-                            self._waveform_widget._data, beatgrid=data
-                        )
+                            self._waveform_widget._data, beatgrid=b
+                        ) if self._waveform_widget._data is not None else None
+                    ))
             self.prodj.data.get_color_preview_waveform(pn, sl, tid, _wf_cb)
             self.prodj.data.get_beatgrid(pn, sl, tid, _wf_cb)
 
