@@ -71,7 +71,18 @@ class _WaveformZoomOverlay(QWidget):
         except Exception:
             return []
 
+    def _parse_beats(self):
+        if not self._beatgrid:
+            return []
+        try:
+            if hasattr(self._beatgrid, 'get'):
+                return self._beatgrid.get("beats", []) or []
+            return list(self._beatgrid)
+        except Exception:
+            return []
+
     def paintEvent(self, _e):
+        """Full waveform view, wandering orange needle."""
         p = QPainter(self)
         W, H = self.width(), self.height()
         p.fillRect(0, 0, W, H, QColor("#0d1117"))
@@ -82,24 +93,12 @@ class _WaveformZoomOverlay(QWidget):
             p.end()
             return
 
-        # Zoom: show 25% of track centred on position
-        zoom = 0.25
-        half = zoom / 2
-        view_start = max(0.0, self._position - half)
-        view_end   = min(1.0, view_start + zoom)
-        view_start = view_end - zoom  # re-clamp start if end was clamped
-        view_start = max(0.0, view_start)
-
+        # Full track view
         data = self._data
         total_cols = len(data) // 2
-        col_start = int(view_start * total_cols)
-        col_end   = int(view_end   * total_cols)
-        n_cols = max(1, col_end - col_start)
         mid = H // 2
-
-        # draw waveform bars
         for sx in range(W):
-            ci = col_start + sx * n_cols // W
+            ci = sx * total_cols // W
             if ci >= total_cols:
                 break
             raw_h = data[2 * ci] & 0x1f
@@ -109,31 +108,33 @@ class _WaveformZoomOverlay(QWidget):
             bar_h = max(1, raw_h * (mid - 4) // 31)
             p.fillRect(sx, mid - bar_h, 1, bar_h * 2, QColor(r, g, b))
 
-        # centre line
-        p.fillRect(0, mid, W, 1, QColor("#374151"))
+        p.fillRect(0, mid, W, 1, QColor("#1f2937"))
 
-        # beatgrid markers
-        beats = self._get_beats()
+        # all beatgrid markers
+        beats = self._parse_beats()
         if beats:
             total_ms = beats[-1]["time"]
             if total_ms > 0:
                 for beat in beats:
-                    rel = beat["time"] / total_ms
-                    if rel < view_start or rel > view_end:
-                        continue
-                    bx = int((rel - view_start) / zoom * W)
+                    bx = int(beat["time"] / total_ms * W)
                     is_one = beat.get("beat") == 1
-                    color  = QColor("#ef4444") if is_one else QColor("#4b5563")
-                    tick_h = 20 if is_one else 10
-                    p.fillRect(bx, 0, 2 if is_one else 1, tick_h, color)
-                    p.fillRect(bx, H - tick_h, 2 if is_one else 1, tick_h, color)
+                    col = QColor("#ef4444") if is_one else QColor("#374151")
+                    th  = H if is_one else H // 3
+                    bw  = 2 if is_one else 1
+                    p.fillRect(bx, 0, bw, th, col)
+                    p.fillRect(bx, H - th, bw, th, col)
 
-        # position needle
-        nx = int((self._position - view_start) / zoom * W)
-        p.fillRect(nx - 1, 0, 3, H, QColor(255, 255, 255, 220))
+        # wandering orange needle
+        nx = int(self._position * W)
+        p.fillRect(nx - 2, 0, 4, H, QColor("#f97316"))
+        from qtpy.QtGui import QPolygon
+        from qtpy.QtCore import QPoint
+        p.setBrush(QColor("#f97316"))
+        p.setPen(Qt.NoPen)
+        p.drawPolygon(QPolygon([QPoint(nx-6,0), QPoint(nx+6,0), QPoint(nx,10)]))
+        p.drawPolygon(QPolygon([QPoint(nx-6,H), QPoint(nx+6,H), QPoint(nx,H-10)]))
 
-        # zoom hint
-        p.setPen(QColor("#374151"))
+        p.setPen(QColor("#4b5563"))
         p.drawText(W - 120, H - 18, 110, 16, Qt.AlignRight, "tap to close")
         p.end()
 
@@ -155,7 +156,6 @@ class _PreviewWaveformWidget(QWidget):
     def setData(self, data, beatgrid=None):
         self._data = data
         self._beatgrid = beatgrid
-        self._pixmap = self._render()
         self._redraw.emit()
 
     def setPosition(self, pos: float):
@@ -165,48 +165,56 @@ class _PreviewWaveformWidget(QWidget):
 
     def clear(self):
         self._data = None
-        self._pixmap = None
         self._beatgrid = None
         self._position = 0.0
         self._redraw.emit()
 
-    def _render(self):
-        if not self._data:
-            return None
-        W, H = 400, 52
-        px = QPixmap(W, H)
-        px.fill(QColor("#0d1117"))
-        p = QPainter(px)
-        data = self._data
-        cols = min(W, len(data) // 2)
+    @staticmethod
+    def _parse_beats(beatgrid):
+        """Return list of beat dicts from ListContainer or dict."""
+        if not beatgrid:
+            return []
+        try:
+            if hasattr(beatgrid, 'get'):
+                return beatgrid.get("beats", []) or []
+            return list(beatgrid)
+        except Exception:
+            return []
+
+    def _draw_waveform(self, p, data, beats, view_start, view_end, W, H):
+        """Draw waveform bars + beatgrid into painter p for the given view window."""
+        total_cols = len(data) // 2
+        n_cols = max(1, int((view_end - view_start) * total_cols))
+        col_start = int(view_start * total_cols)
         mid = H // 2
-        for x in range(cols):
-            raw_h = data[2 * x] & 0x1f
-            white = data[2 * x + 1] & 0x07
+        for sx in range(W):
+            ci = col_start + sx * n_cols // W
+            if ci >= total_cols:
+                break
+            raw_h = data[2 * ci] & 0x1f
+            white = data[2 * ci + 1] & 0x07
             r = g = 36 * white
             b = 140 + 16 * white
-            bar_h = max(1, raw_h * mid // 31)
-            p.fillRect(x, mid - bar_h, 1, bar_h * 2, QColor(r, g, b))
-        p.fillRect(0, mid, W, 1, QColor("#374151"))
-        if self._beatgrid:
-            try:
-                # beatgrid may be a ListContainer (construct) or a dict with 'beats'
-                if hasattr(self._beatgrid, 'get'):
-                    beats = self._beatgrid.get("beats", []) or []
-                else:
-                    beats = list(self._beatgrid)  # ListContainer — entries are beat dicts
-                if beats:
-                    total_ms = beats[-1]["time"]
-                    if total_ms > 0:
-                        for beat in beats:
-                            if beat.get("beat") == 1:
-                                bx = int(beat["time"] / total_ms * (W - 1))
-                                p.fillRect(bx, 0, 2, 7, QColor("#ef4444"))
-                                p.fillRect(bx, H - 7, 2, 7, QColor("#ef4444"))
-            except Exception as e:
-                logging.debug("Waveform beatgrid render error: %s", e)
-        p.end()
-        return px
+            bar_h = max(1, raw_h * (mid - 2) // 31)
+            p.fillRect(sx, mid - bar_h, 1, bar_h * 2, QColor(r, g, b))
+        # centre line
+        p.fillRect(0, mid, W, 1, QColor("#1f2937"))
+        # beatgrid markers
+        span = view_end - view_start
+        if beats:
+            total_ms = beats[-1]["time"]
+            if total_ms > 0:
+                for beat in beats:
+                    rel = beat["time"] / total_ms
+                    if rel < view_start or rel > view_end:
+                        continue
+                    bx = int((rel - view_start) / span * W)
+                    is_one = beat.get("beat") == 1
+                    col = QColor("#ef4444") if is_one else QColor("#374151")
+                    th = H if is_one else H // 3
+                    bw = 2 if is_one else 1
+                    p.fillRect(bx, 0, bw, th, col)
+                    p.fillRect(bx, H - th, bw, th, col)
 
     def mousePressEvent(self, _e):
         if self._data is None:
@@ -217,21 +225,45 @@ class _PreviewWaveformWidget(QWidget):
         _WaveformZoomOverlay(self._data, self._beatgrid, self._position, top)
 
     def paintEvent(self, _e):
+        """CDJ-style: needle fixed in centre, waveform scrolls past it.
+        Zoom = 5% of track visible — beatgrid ticks clearly readable.
+        """
         p = QPainter(self)
         W, H = self.width(), self.height()
-        if self._pixmap:
-            scaled = self._pixmap.scaled(W, H, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-            p.drawPixmap(0, 0, scaled)
-        else:
-            p.fillRect(0, 0, W, H, QColor("#0d1117"))
+        p.fillRect(0, 0, W, H, QColor("#0d1117"))
+
+        if not self._data:
             p.setPen(QColor("#374151"))
-            p.drawText(0, 0, W, H, Qt.AlignCenter, "Tap for zoom")
-        # position needle
-        nx = int(self._position * W)
-        p.fillRect(nx - 1, 0, 3, H, QColor(255, 255, 255, 180))
-        # zoom icon hint bottom-right
+            p.drawText(0, 0, W, H, Qt.AlignCenter, "Tap for waveform")
+            p.end()
+            return
+
+        # 5% zoom, position centred
+        zoom = 0.05
+        half = zoom / 2
+        view_start = max(0.0, self._position - half)
+        view_end   = view_start + zoom
+        if view_end > 1.0:
+            view_end   = 1.0
+            view_start = max(0.0, 1.0 - zoom)
+
+        beats = self._parse_beats(self._beatgrid)
+        self._draw_waveform(p, self._data, beats, view_start, view_end, W, H)
+
+        # Fixed centre needle — red, 3px + triangles top/bottom
+        nx = W // 2
+        p.fillRect(nx - 1, 0, 3, H, QColor("#ef4444"))
+        # top triangle
+        from qtpy.QtGui import QPolygon
+        from qtpy.QtCore import QPoint
+        p.setBrush(QColor("#ef4444"))
+        p.setPen(Qt.NoPen)
+        p.drawPolygon(QPolygon([QPoint(nx-5,0), QPoint(nx+5,0), QPoint(nx,8)]))
+        p.drawPolygon(QPolygon([QPoint(nx-5,H), QPoint(nx+5,H), QPoint(nx,H-8)]))
+
+        # zoom hint
         p.setPen(QColor("#374151"))
-        p.drawText(W - 60, H - 14, 54, 12, Qt.AlignRight, "+ zoom")
+        p.drawText(W - 58, H - 13, 52, 12, Qt.AlignRight, "+ zoom")
         p.end()
 
 
