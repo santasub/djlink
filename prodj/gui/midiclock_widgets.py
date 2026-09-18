@@ -40,6 +40,108 @@ _LED_OFF          = "#374151"   # inactive
 _LED_OFF_BORDER   = "#4b5563"
 
 
+class _WaveformZoomDialog(QDialog):
+    """Fullwidth popup showing a zoomed waveform with all beatgrid markers.
+    Click anywhere to close.
+    """
+    def __init__(self, data, beatgrid, position, parent=None):
+        super().__init__(parent, Qt.FramelessWindowHint | Qt.Dialog)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setFixedSize(1280, 280)
+        self.setStyleSheet("background:#0d1117;border:2px solid #1e3a5f;")
+        self._data = data
+        self._beatgrid = beatgrid
+        self._position = position
+        # centre vertically over parent
+        if parent:
+            pp = parent.mapToGlobal(parent.rect().topLeft())
+            # find top-level window
+            top = parent
+            while top.parent():
+                top = top.parent()
+            gp = top.geometry()
+            self.move(gp.left(), gp.top() + (gp.height() - 280) // 2)
+
+    def mousePressEvent(self, _e):
+        self.accept()
+
+    def _get_beats(self):
+        if not self._beatgrid:
+            return []
+        try:
+            if hasattr(self._beatgrid, 'get'):
+                return self._beatgrid.get("beats", []) or []
+            return list(self._beatgrid)
+        except Exception:
+            return []
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        W, H = self.width(), self.height()
+        p.fillRect(0, 0, W, H, QColor("#0d1117"))
+
+        if not self._data:
+            p.setPen(QColor("#374151"))
+            p.drawText(0, 0, W, H, Qt.AlignCenter, "No waveform data")
+            p.end()
+            return
+
+        # Zoom: show 25% of track centred on position
+        zoom = 0.25
+        half = zoom / 2
+        view_start = max(0.0, self._position - half)
+        view_end   = min(1.0, view_start + zoom)
+        view_start = view_end - zoom  # re-clamp start if end was clamped
+        view_start = max(0.0, view_start)
+
+        data = self._data
+        total_cols = len(data) // 2
+        col_start = int(view_start * total_cols)
+        col_end   = int(view_end   * total_cols)
+        n_cols = max(1, col_end - col_start)
+        mid = H // 2
+
+        # draw waveform bars
+        for sx in range(W):
+            ci = col_start + sx * n_cols // W
+            if ci >= total_cols:
+                break
+            raw_h = data[2 * ci] & 0x1f
+            white = data[2 * ci + 1] & 0x07
+            r = g = 36 * white
+            b = 140 + 16 * white
+            bar_h = max(1, raw_h * (mid - 4) // 31)
+            p.fillRect(sx, mid - bar_h, 1, bar_h * 2, QColor(r, g, b))
+
+        # centre line
+        p.fillRect(0, mid, W, 1, QColor("#374151"))
+
+        # beatgrid markers
+        beats = self._get_beats()
+        if beats:
+            total_ms = beats[-1]["time"]
+            if total_ms > 0:
+                for beat in beats:
+                    rel = beat["time"] / total_ms
+                    if rel < view_start or rel > view_end:
+                        continue
+                    bx = int((rel - view_start) / zoom * W)
+                    is_one = beat.get("beat") == 1
+                    color  = QColor("#ef4444") if is_one else QColor("#4b5563")
+                    tick_h = 20 if is_one else 10
+                    p.fillRect(bx, 0, 2 if is_one else 1, tick_h, color)
+                    p.fillRect(bx, H - tick_h, 2 if is_one else 1, tick_h, color)
+
+        # position needle
+        nx = int((self._position - view_start) / zoom * W)
+        p.fillRect(nx - 1, 0, 3, H, QColor(255, 255, 255, 220))
+
+        # zoom hint
+        p.setPen(QColor("#374151"))
+        p.drawText(W - 120, H - 18, 110, 16, Qt.AlignRight, "tap to close")
+        p.end()
+
+
 class _PreviewWaveformWidget(QWidget):
     """Dark-themed preview waveform + beatgrid for the Now Playing panel."""
     _redraw = Signal()
@@ -52,6 +154,7 @@ class _PreviewWaveformWidget(QWidget):
         self._pixmap = None
         self._redraw.connect(self.update)
         self.setMinimumWidth(100)
+        self.setCursor(Qt.PointingHandCursor)
 
     def setData(self, data, beatgrid=None):
         self._data = data
@@ -109,6 +212,13 @@ class _PreviewWaveformWidget(QWidget):
         p.end()
         return px
 
+    def mousePressEvent(self, _e):
+        dlg = _WaveformZoomDialog(
+            self._data, self._beatgrid, self._position,
+            parent=self
+        )
+        dlg.exec_()
+
     def paintEvent(self, _e):
         p = QPainter(self)
         W, H = self.width(), self.height()
@@ -118,9 +228,13 @@ class _PreviewWaveformWidget(QWidget):
         else:
             p.fillRect(0, 0, W, H, QColor("#0d1117"))
             p.setPen(QColor("#374151"))
-            p.drawText(0, 0, W, H, Qt.AlignCenter, "No waveform")
+            p.drawText(0, 0, W, H, Qt.AlignCenter, "Tap for zoom")
+        # position needle
         nx = int(self._position * W)
         p.fillRect(nx - 1, 0, 3, H, QColor(255, 255, 255, 180))
+        # zoom icon hint bottom-right
+        p.setPen(QColor("#374151"))
+        p.drawText(W - 60, H - 14, 54, 12, Qt.AlignRight, "+ zoom")
         p.end()
 
 
@@ -899,37 +1013,37 @@ class MidiClockMainWindow(QWidget):
             self.player_grid_layout.setColumnStretch(_col, 1)
         np_layout.addLayout(self.player_grid_layout)
         self._waveform_widget = _PreviewWaveformWidget()
-        self._waveform_widget.setFixedHeight(60)
+        self._waveform_widget.setFixedHeight(90)
         self._waveform_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         np_layout.addWidget(self._waveform_widget)
         track_bar = QHBoxLayout()
         track_bar.setContentsMargins(0, 2, 0, 0)
         track_bar.setSpacing(6)
         self._track_state_led = QFrame()
-        self._track_state_led.setFixedSize(8, 8)
-        self._track_state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:4px;")
+        self._track_state_led.setFixedSize(10, 10)
+        self._track_state_led.setStyleSheet(f"background:{_LED_OFF};border-radius:5px;")
         track_bar.addWidget(self._track_state_led)
         self._track_player_label = QLabel("—")
-        self._track_player_label.setStyleSheet("color:#6b7280;font-size:8pt;font-weight:bold;")
-        self._track_player_label.setFixedWidth(20)
+        self._track_player_label.setStyleSheet("color:#6b7280;font-size:10pt;font-weight:bold;")
+        self._track_player_label.setFixedWidth(28)
         track_bar.addWidget(self._track_player_label)
         self._track_title_label = QLabel("No track")
-        self._track_title_label.setStyleSheet("color:#e5e7eb;font-size:9pt;font-weight:bold;")
+        self._track_title_label.setStyleSheet("color:#e5e7eb;font-size:11pt;font-weight:bold;")
         self._track_title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._track_title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         track_bar.addWidget(self._track_title_label, stretch=3)
         self._track_artist_label = QLabel("")
-        self._track_artist_label.setStyleSheet("color:#9ca3af;font-size:8pt;")
+        self._track_artist_label.setStyleSheet("color:#9ca3af;font-size:10pt;")
         self._track_artist_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._track_artist_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         track_bar.addWidget(self._track_artist_label, stretch=2)
         self._track_key_label = QLabel("")
-        self._track_key_label.setStyleSheet("color:#a78bfa;font-size:8pt;font-weight:bold;")
-        self._track_key_label.setFixedWidth(38)
+        self._track_key_label.setStyleSheet("color:#a78bfa;font-size:10pt;font-weight:bold;")
+        self._track_key_label.setFixedWidth(46)
         self._track_key_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         track_bar.addWidget(self._track_key_label)
         self._track_duration_label = QLabel("")
-        self._track_duration_label.setStyleSheet("color:#6b7280;font-size:8pt;")
+        self._track_duration_label.setStyleSheet("color:#6b7280;font-size:10pt;")
         self._track_duration_label.setFixedWidth(34)
         self._track_duration_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         track_bar.addWidget(self._track_duration_label)
@@ -1740,10 +1854,31 @@ class MidiClockMainWindow(QWidget):
                               self._sync_beats_seen, remaining)
 
                 if remaining <= 0:
-                    # Countdown reached zero — fire MIDI Start now.
+                    # Countdown reached zero — align grid then fire MIDI Start.
                     self._sync_start_pending = False
                     self._sync_start_countdown = 0
                     self._output_state = 'running'
+
+                    # Hard-snap the ALSA queue to this beat boundary.
+                    # The CDJ beat packet just arrived — wall-clock time is
+                    # now ≈ beat boundary.  We compute how far our internal
+                    # clock is ahead/behind and correct it so send_start()
+                    # is scheduled exactly on our next beat tick.
+                    clk = self.midi_clock_instance
+                    if clk and clk.is_alive():
+                        beat_period_ms = clk.delay * 24.0 * 1000.0
+                        if beat_period_ms > 0:
+                            t_last = getattr(clk, 'last_beat_wall_time', None)
+                            if t_last is not None:
+                                # elapsed since last MIDI beat
+                                elapsed_ms = (time.time() - t_last) * 1000.0
+                                # how far into the current beat period are we
+                                phase_ms = elapsed_ms % beat_period_ms
+                                # snap: nudge earlier by phase_ms so next beat = now
+                                snap_ms = -(phase_ms)
+                                clk.adjust_phase(snap_ms)
+                                logging.info("Sync snap: %.1f ms before send_start", snap_ms)
+
                     self._countdown_label.setText("►")
                     self._sync_status_label.setText("Running — in sync!")
                     self._sync_status_label.setStyleSheet(

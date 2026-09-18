@@ -216,11 +216,27 @@ class MidiClock(Thread):
       logging.debug("alsaseq: phase jump %.3f ms -> %d.%09d s", ms, current_s, current_ns)
 
   def send_start(self):
-    """Send MIDI Start (0xFA) — tells slaved devices to begin playback from position 0."""
-    # ALSA sequencer event type 10 = SND_SEQ_EVENT_START
-    # data field requires a 6-element tuple (alsaseq C extension requirement)
-    alsaseq.output((10, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), (0, 0, 0, 0, 0, 0)))
-    logging.info("alsaseq: MIDI Start (0xFA) sent")
+    """Send MIDI Start (0xFA) scheduled at the next beat boundary in the ALSA queue.
+
+    We schedule the START event at the timestamp of the *next* beat tick
+    (i.e. the current queue time_s/time_ns which points to the next tick to
+    be enqueued).  This ensures 0xFA arrives at the downstream device exactly
+    on the beat, not some random ms later due to Python/GUI thread latency.
+    """
+    with self._bpm_lock:
+      # time_s/time_ns is the timestamp of the NEXT tick to be enqueued.
+      # Round back to the nearest beat boundary (multiple of 24 ticks).
+      beat_period_ns = int(self._delay * 24 * 1e9)
+      t_ns = self.time_s * 1_000_000_000 + self.time_ns
+      if beat_period_ns > 0:
+        # align to previous beat boundary
+        t_ns = (t_ns // beat_period_ns) * beat_period_ns
+      sched_s  = t_ns // 1_000_000_000
+      sched_ns = t_ns %  1_000_000_000
+    # SND_SEQ_EVENT_START = 10, flags=1 (scheduled/tick-time)
+    alsaseq.output((10, 1, 0, 0, (sched_s, sched_ns), (0, 0),
+                    (self.client_id, self.client_port), (0, 0, 0, 0, 0, 0)))
+    logging.info("alsaseq: MIDI Start (0xFA) scheduled at %d.%09d", sched_s, sched_ns)
 
   def send_stop(self):
     """Send MIDI Stop (0xFC) — tells slaved devices to stop playback."""
