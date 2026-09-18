@@ -1573,6 +1573,8 @@ class MidiClockMainWindow(QWidget):
 
         active_source = self._get_active_source_player_number()
         if player_number != active_source:
+            logging.debug("beat_timing: player %d ignored, active_source=%s",
+                          player_number, active_source)
             return
 
         # ── Wall-clock phase error ──────────────────────────────────────────
@@ -1673,12 +1675,21 @@ class MidiClockMainWindow(QWidget):
             tile = self.player_tiles.get(self.selected_player_source)
             if tile and not tile.is_dropped:
                 return self.selected_player_source
-        # Fall back to network master
-        for client in self.prodj.cl.clients:
-            if client.type == "cdj" and "master" in client.state:
-                tile = self.player_tiles.get(client.player_number)
-                if tile is None or not tile.is_dropped:
-                    return client.player_number
+
+        # Prefer network master
+        active_cdjs = [
+            c for c in self.prodj.cl.clients
+            if c.type == "cdj" and not (self.player_tiles.get(c.player_number) and
+                                        self.player_tiles[c.player_number].is_dropped)
+        ]
+        for client in active_cdjs:
+            if "master" in client.state:
+                return client.player_number
+
+        # Only one CDJ connected — use it regardless of master flag
+        if len(active_cdjs) == 1:
+            return active_cdjs[0].player_number
+
         return None
 
     def update_midi_clock_source_logic(self) -> None:
