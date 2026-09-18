@@ -419,8 +419,15 @@ class LauncherWindow(QWidget):
 
         self._set_status(f"Launching on {self._selected_iface}…", "#10b981")
         self._process = QProcess(self)
+        self._process.setProcessChannelMode(QProcess.MergedChannels)
         self._process.finished.connect(self._app_finished)
-        self._process.start(python, [script, "--fullscreen", "--iface", self._selected_iface])
+        # Redirect stdout+stderr to log file for crash diagnostics
+        log_path = os.path.join(_REPO_DIR, "/tmp/midiclock.log")
+        self._process.setStandardOutputFile(log_path)
+        self._process.start(python, [
+            script, "--fullscreen", "--iface", self._selected_iface,
+            "--loglevel", "debug"
+        ])
         self.hide()
 
     def _app_finished(self, exit_code, _status):
