@@ -19,7 +19,7 @@ from qtpy.QtWidgets import (
     QPushButton, QLabel, QMessageBox, QButtonGroup, QScrollArea,
     QFrame, QPlainTextEdit, QSizePolicy
 )
-from qtpy.QtCore import Qt, QProcess
+from qtpy.QtCore import Qt, QProcess, QTimer
 from qtpy.QtGui import QFont
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -176,6 +176,7 @@ class LauncherWindow(QWidget):
         self._prefs = _load_prefs()
         self._selected_iface = self._prefs.get("iface", "")
         self._iface_buttons = {}   # name -> QPushButton
+        self._known_ifaces = []    # last seen (name, ip) list — used to detect changes
 
         self.setStyleSheet("""
             QWidget {
@@ -288,10 +289,26 @@ class LauncherWindow(QWidget):
         """)
         root.addWidget(self._log_panel)
 
-        # Build interface buttons last — needs _btn_launch and _status to exist
+                # Build interface buttons last — needs _btn_launch and _status to exist
         self._build_iface_buttons()
 
+        # Poll for new/removed interfaces every 5 seconds
+        self._iface_poll_timer = QTimer(self)
+        self._iface_poll_timer.setInterval(5000)
+        self._iface_poll_timer.timeout.connect(self._poll_interfaces)
+        self._iface_poll_timer.start()
+
     # ── Interface buttons ─────────────────────────────────────────────────
+
+    def _poll_interfaces(self):
+        """Called every 5 s — rebuild buttons only when the interface list changed."""
+        # Don't disturb the UI while an update or app process is running
+        if self._process is not None and self._process.state() != QProcess.NotRunning:
+            return
+        current = _get_interfaces()
+        if current != self._known_ifaces:
+            logging.info("Interface list changed: %s", current)
+            self._build_iface_buttons()
 
     def _build_iface_buttons(self):
         """Populate the interface button row from live system interfaces."""
@@ -303,10 +320,14 @@ class LauncherWindow(QWidget):
         self._iface_buttons.clear()
 
         ifaces = _get_interfaces()
+        self._known_ifaces = ifaces   # remember for change-detection
+
         if not ifaces:
-            lbl = QLabel("No network interfaces found.")
+            lbl = QLabel("No network interfaces found — retrying…")
             lbl.setStyleSheet("color:#ef4444; font-size:11pt;")
             self._iface_row.insertWidget(0, lbl)
+            self._btn_launch.setEnabled(False)
+            self._set_status("Waiting for network interface…", "#f59e0b")
             return
 
         group = QButtonGroup(self)
