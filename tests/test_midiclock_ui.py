@@ -48,23 +48,23 @@ class TestMidiClockUI(unittest.TestCase):
         fake_clock.is_alive.return_value = True
         fake_clock.delay = 60.0 / 120.0 / 24.0
         self.window.midi_clock_instance = fake_clock
-        self.window.pitch_amount_spinbox.setValue(5.0)
-        self.window.pitch_up_button.click()   # Later  +5ms
-        fake_clock.adjust_phase.assert_called_once_with(5.0)
+        self.window._set_grid_step(5)
+        self.window.pitch_up_button.click()
+        fake_clock.adjust_phase.assert_called_once_with(5)
         fake_clock.setBpm.assert_not_called()
 
     def test_grid_shift_down_calls_adjust_phase_negative(self):
         fake_clock = MagicMock()
         fake_clock.is_alive.return_value = True
         self.window.midi_clock_instance = fake_clock
-        self.window.pitch_amount_spinbox.setValue(10.0)
-        self.window.pitch_down_button.click()  # Earlier  -10ms
-        fake_clock.adjust_phase.assert_called_once_with(-10.0)
+        self.window._set_grid_step(10)
+        self.window.pitch_down_button.click()
+        fake_clock.adjust_phase.assert_called_once_with(-10)
 
     def test_grid_shift_no_clock_does_not_crash(self):
         """Shifting with no clock running must be a silent no-op."""
         self.window.midi_clock_instance = None
-        self.window.pitch_amount_spinbox.setValue(5.0)
+        self.window._set_grid_step(5)
         self.window.pitch_up_button.click()  # should not raise
 
     # ------------------------------------------------------------------

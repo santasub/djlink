@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "C:\git\docker-verify\djlink\midiclock-qt.py", line 11, in <module>
+    from prodj.gui.midiclock_widgets import MidiClockMainWindow
+  File "C:\git\docker-verify\djlink\prodj\gui\midiclock_widgets.py", line 278
+    """Select a new step size and update the toggle buttons."""
+    ^
+IndentationError: expected an indented block after function definition on line 277
