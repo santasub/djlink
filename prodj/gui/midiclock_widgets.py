@@ -206,6 +206,8 @@ class MidiClockMainWindow(QWidget):
         # Sync Start count-in state
         self._sync_start_pending = False   # waiting for bar beat 1
         self._sync_start_countdown = 0     # beats remaining until bar beat 1
+        # Clock output state: 'stopped' | 'waiting' | 'running'
+        self._output_state = 'stopped'
 
         # Phase-error sparkline history (shown in metrics panel)
         self._sparkline: List[float] = []
@@ -369,10 +371,8 @@ class MidiClockMainWindow(QWidget):
             self.auto_sync_button.setText("Auto Sync: ON")
             self.phase_error_history.clear()
             self._sparkline.clear()
-            # Re-snap so the existing _grid_offset_ms is honoured from the start
             self._beat_snap_pending = True
-            logging.info("Auto phase correction enabled (grid offset %.1f ms).",
-                         self._grid_offset_ms)
+            logging.info("Auto Sync ON (grid offset %.1f ms).", self._grid_offset_ms)
         else:
             self.auto_sync_button.setText("Auto Sync: OFF")
             self.phase_error_ms = 0.0
@@ -380,7 +380,7 @@ class MidiClockMainWindow(QWidget):
             self._sparkline.clear()
             self._update_phase_error_display()
             self._refresh_metrics()
-            logging.info("Auto phase correction disabled.")
+            logging.info("Auto Sync OFF.")
 
     def _update_phase_error_display(self):
         """Update the phase error label and lock LED colour based on current phase_error_ms."""
@@ -674,11 +674,11 @@ class MidiClockMainWindow(QWidget):
         self._midi_port_btn.clicked.connect(self._open_midi_port_dialog)
         toolbar.addWidget(self._midi_port_btn, stretch=3)
 
+        # Hidden legacy button — kept for test compatibility, not shown in UI
         self.start_stop_button = QPushButton("Start")
         self.start_stop_button.setCheckable(True)
-        self.start_stop_button.setFixedWidth(110)
+        self.start_stop_button.setVisible(False)
         self.start_stop_button.clicked.connect(self.toggle_midi_clock_output)
-        toolbar.addWidget(self.start_stop_button)
 
         self.settings_button = QPushButton("Settings")
         self.settings_button.setFixedWidth(110)
@@ -848,37 +848,7 @@ class MidiClockMainWindow(QWidget):
         phase_layout.setContentsMargins(12, 8, 12, 10)
         phase_layout.setSpacing(8)
 
-        # Row 1: Auto Sync toggle + phase lock LED + ±ms readout
-        auto_row = QHBoxLayout()
-        self.auto_sync_button = QPushButton("Auto Sync: ON")
-        self.auto_sync_button.setCheckable(True)
-        self.auto_sync_button.setChecked(True)
-        self.auto_sync_button.setMinimumHeight(44)
-        self.auto_sync_button.setStyleSheet(
-            "QPushButton:checked{"
-            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-            "stop:0 #065f46,stop:1 #047857);"
-            "border:2px solid #10b981;}"
-        )
-        self.auto_sync_button.clicked.connect(self.toggle_auto_sync)
-        auto_row.addWidget(self.auto_sync_button)
-
-        self.phase_lock_led = QFrame()
-        self.phase_lock_led.setFixedSize(26, 26)
-        self.phase_lock_led.setStyleSheet(
-            f"background:{_LED_OFF};border:2px solid {_LED_OFF_BORDER};border-radius:13px;"
-        )
-        auto_row.addWidget(self.phase_lock_led)
-
-        self.phase_error_label = QLabel("±0.0 ms")
-        self.phase_error_label.setStyleSheet(
-            "color:#6b7280;font-weight:bold;font-size:12pt;"
-        )
-        auto_row.addWidget(self.phase_error_label)
-        auto_row.addStretch()
-        phase_layout.addLayout(auto_row)
-
-        # Row 2–5: Live metrics panel (replaces removed nudge/Force Sync row)
+        # Live metrics panel
         metrics_frame = QFrame()
         metrics_frame.setObjectName("MetricsFrame")
         metrics_frame.setStyleSheet(
@@ -1003,57 +973,99 @@ class MidiClockMainWindow(QWidget):
         right_col = QVBoxLayout()
         right_col.setSpacing(8)
 
-        # ── Sync Start / Stop ─────────────────────────────────────────────
+        # ── Device Sync ───────────────────────────────────────────────────
         sync_group = QGroupBox("Device Sync")
         sync_layout = QVBoxLayout()
         sync_layout.setContentsMargins(12, 8, 12, 10)
-        sync_layout.setSpacing(10)
+        sync_layout.setSpacing(8)
 
-        # Count-in display
-                # Countdown + status on one row to save vertical space
+        # Countdown + status row
         countdown_row = QHBoxLayout()
+        countdown_row.setSpacing(10)
         self._countdown_label = QLabel("—")
-        self._countdown_label.setFixedWidth(60)
+        self._countdown_label.setFixedSize(70, 70)
         self._countdown_label.setAlignment(Qt.AlignCenter)
         self._countdown_label.setStyleSheet(
-            "color:#f59e0b;font-size:28pt;font-weight:bold;"
+            "color:#f59e0b;font-size:32pt;font-weight:bold;"
+            "background:#1c1917;border:2px solid #44403c;border-radius:8px;"
         )
         countdown_row.addWidget(self._countdown_label)
-        self._sync_status_label = QLabel("Press Sync Start\nto begin count-in")
+        self._sync_status_label = QLabel("Press Start to sync\nto CDJ bar beat 1")
         self._sync_status_label.setWordWrap(True)
         self._sync_status_label.setStyleSheet("color:#6b7280;font-size:9pt;")
-        countdown_row.addWidget(self._sync_status_label)
+        countdown_row.addWidget(self._sync_status_label, stretch=1)
         sync_layout.addLayout(countdown_row)
 
-        sync_btn_row = QHBoxLayout()
-        sync_btn_row.setSpacing(8)
-        self._sync_start_btn = QPushButton("Sync Start")
-        self._sync_start_btn.setMinimumHeight(60)
+        # Start button — full width, big
+        self._sync_start_btn = QPushButton("▶   Start & Sync")
+        self._sync_start_btn.setMinimumHeight(70)
         self._sync_start_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sync_start_btn.setStyleSheet(
             "QPushButton{background:#065f46;border:2px solid #10b981;"
-            "border-radius:8px;color:white;font-size:13pt;font-weight:bold;}"
+            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
             "QPushButton:pressed{background:#047857;}"
             "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
         )
         self._sync_start_btn.clicked.connect(self._on_sync_start_clicked)
-        sync_btn_row.addWidget(self._sync_start_btn)
+        sync_layout.addWidget(self._sync_start_btn)
 
-        self._sync_stop_btn = QPushButton("Stop")
-        self._sync_stop_btn.setMinimumHeight(60)
-        self._sync_stop_btn.setFixedWidth(90)
+        # Stop button — full width
+        self._sync_stop_btn = QPushButton("■   Stop")
+        self._sync_stop_btn.setMinimumHeight(56)
+        self._sync_stop_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._sync_stop_btn.setStyleSheet(
             "QPushButton{background:#450a0a;border:2px solid #ef4444;"
-            "border-radius:8px;color:white;font-size:13pt;font-weight:bold;}"
+            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
             "QPushButton:pressed{background:#dc2626;}"
             "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
         )
+        self._sync_stop_btn.setEnabled(False)
         self._sync_stop_btn.clicked.connect(self._on_sync_stop_clicked)
-        sync_btn_row.addWidget(self._sync_stop_btn)
-        sync_layout.addLayout(sync_btn_row)
+        sync_layout.addWidget(self._sync_stop_btn)
 
         sync_group.setLayout(sync_layout)
         right_col.addWidget(sync_group)
+
+        # ── Auto Sync ─────────────────────────────────────────────────────
+        autosync_group = QGroupBox("Auto Sync")
+        autosync_layout = QVBoxLayout()
+        autosync_layout.setContentsMargins(12, 8, 12, 10)
+        autosync_layout.setSpacing(8)
+
+        self.auto_sync_button = QPushButton("Auto Sync: OFF")
+        self.auto_sync_button.setCheckable(True)
+        self.auto_sync_button.setChecked(False)
+        self.auto_phase_correction_enabled = False
+        self.auto_sync_button.setMinimumHeight(52)
+        self.auto_sync_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.auto_sync_button.setStyleSheet(
+            "QPushButton{background:#1f2937;border:2px solid #374151;"
+            "border-radius:8px;color:#6b7280;font-size:13pt;font-weight:bold;}"
+            "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "stop:0 #065f46,stop:1 #047857);"
+            "border:2px solid #10b981;color:white;}"
+        )
+        self.auto_sync_button.clicked.connect(self.toggle_auto_sync)
+        autosync_layout.addWidget(self.auto_sync_button)
+
+        # Phase error display inside Auto Sync group
+        phase_row = QHBoxLayout()
+        self.phase_lock_led = QFrame()
+        self.phase_lock_led.setFixedSize(20, 20)
+        self.phase_lock_led.setStyleSheet(
+            f"background:{_LED_OFF};border:2px solid {_LED_OFF_BORDER};border-radius:10px;"
+        )
+        phase_row.addWidget(self.phase_lock_led)
+        self.phase_error_label = QLabel("±0.0 ms")
+        self.phase_error_label.setStyleSheet(
+            "color:#6b7280;font-weight:bold;font-size:12pt;"
+        )
+        phase_row.addWidget(self.phase_error_label)
+        phase_row.addStretch()
+        autosync_layout.addLayout(phase_row)
+
+        autosync_group.setLayout(autosync_layout)
+        right_col.addWidget(autosync_group)
 
         # ── Grid Shift (pure phase nudge, no BPM change) ──────────────────
         shift_group = QGroupBox("Grid Shift (Phase Only)")
@@ -1479,42 +1491,106 @@ class MidiClockMainWindow(QWidget):
         self.update_global_status_label()
 
     def _on_sync_start_clicked(self):
-        """User pressed Sync Start — arm the count-in, fire 0xFA on next bar beat 1."""
-        if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
-            self._sync_status_label.setText("Start the MIDI clock first.")
-            self._sync_status_label.setStyleSheet("color:#ef4444;font-size:9pt;")
-            return
-        if self._sync_start_pending:
+        """Start & Sync: starts clock internally, waits for CDJ bar beat 1,
+        then fires MIDI output + 0xFA exactly on beat 1."""
+
+        if self._output_state == 'waiting':
             # Cancel pending count-in
+            self._output_state = 'stopped'
             self._sync_start_pending = False
             self._sync_start_countdown = 0
             self._countdown_label.setText("—")
-            self._sync_status_label.setText("Count-in cancelled.")
+            self._sync_status_label.setText("Cancelled.")
             self._sync_status_label.setStyleSheet("color:#6b7280;font-size:9pt;")
-            self._sync_start_btn.setText("Sync Start")
+            self._sync_start_btn.setText("▶   Start & Sync")
+            self._sync_stop_btn.setEnabled(False)
+            # Stop internal clock
+            if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+                self.midi_clock_instance.stop()
+                self.midi_clock_instance = None
+                self._last_applied_bpm = None
+            self._midi_port_btn.setEnabled(True)
+            self.update_global_status_label()
             return
+
+        if self._output_state == 'running':
+            # Already running — ignore, use Stop button
+            return
+
+        # ── STOPPED → WAITING ────────────────────────────────────────
+        port_display = self.midi_port_combo.currentText()
+        if not port_display or any(kw in port_display
+                                   for kw in ("No MIDI", "Error listing", "No MIDI Ports")):
+            self._sync_status_label.setText("Select a MIDI device first.")
+            self._sync_status_label.setStyleSheet("color:#ef4444;font-size:9pt;")
+            return
+
+        # Start internal clock (silent — no MIDI output until beat 1)
+        try:
+            self.midi_clock_instance = self.MidiClockImpl()
+            open_kwargs = self.midi_port_combo.currentData() or {}
+            self.midi_clock_instance.open(**open_kwargs)
+            self.midi_clock_instance.set_beat_callback(self.beat_received)
+            seed_bpm = self._resolve_bpm_for_seed()
+            self.midi_clock_instance.setBpm(seed_bpm)
+            self.midi_clock_instance.start()
+            self._beat_snap_pending = True
+            self._last_applied_bpm = seed_bpm
+            logging.info("Clock started internally at %.2f BPM, waiting for bar beat 1", seed_bpm)
+        except Exception as exc:
+            logging.error("Failed to start MIDI clock: %s", exc, exc_info=True)
+            self.midi_clock_instance = None
+            self._sync_status_label.setText("Failed to open MIDI port.")
+            self._sync_status_label.setStyleSheet("color:#ef4444;font-size:9pt;")
+            return
+
+        self._output_state = 'waiting'
         self._sync_start_pending = True
-        self._sync_start_btn.setText("Cancel")
-        self._sync_status_label.setText("Waiting for bar beat 1…")
-        self._sync_status_label.setStyleSheet("color:#f59e0b;font-size:9pt;")
-        # Show how many beats until next bar beat 1
+        self._midi_port_btn.setEnabled(False)
+        self._sync_stop_btn.setEnabled(True)
+        self._sync_start_btn.setText("✕   Cancel")
+        self._sync_start_btn.setStyleSheet(
+            "QPushButton{background:#78350f;border:2px solid #f59e0b;"
+            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
+            "QPushButton:pressed{background:#92400e;}"
+        )
         beats_left = self._beats_until_bar_one()
         self._sync_start_countdown = beats_left
         self._countdown_label.setText(str(beats_left) if beats_left > 0 else "►")
+        self._sync_status_label.setText("Waiting for\nbar beat 1…")
+        self._sync_status_label.setStyleSheet("color:#f59e0b;font-size:9pt;font-weight:bold;")
+        self.update_global_status_label()
         logging.info("Sync Start armed — %d beats until bar beat 1.", beats_left)
 
     def _on_sync_stop_clicked(self):
-        """Send MIDI Stop (0xFC) immediately."""
+        """Stop MIDI output immediately — send 0xFC, stop clock."""
         self._sync_start_pending = False
         self._sync_start_countdown = 0
+        self._output_state = 'stopped'
         self._countdown_label.setText("—")
-        self._sync_start_btn.setText("Sync Start")
+        self._sync_start_btn.setText("▶   Start & Sync")
+        self._sync_start_btn.setStyleSheet(
+            "QPushButton{background:#065f46;border:2px solid #10b981;"
+            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
+            "QPushButton:pressed{background:#047857;}"
+            "QPushButton:disabled{background:#1f2937;border-color:#374151;color:#4b5563;}"
+        )
+        self._sync_stop_btn.setEnabled(False)
         if self.midi_clock_instance and self.midi_clock_instance.is_alive():
             if hasattr(self.midi_clock_instance, 'send_stop'):
                 self.midi_clock_instance.send_stop()
-        self._sync_status_label.setText("Device stopped.")
+            self.midi_clock_instance.stop()
+            self.midi_clock_instance = None
+            self._last_applied_bpm = None
+        self._midi_port_btn.setEnabled(True)
+        self._sync_status_label.setText("Stopped.")
         self._sync_status_label.setStyleSheet("color:#ef4444;font-size:9pt;")
-        logging.info("Sync Stop sent.")
+        self.phase_error_ms = 0.0
+        self.phase_error_history.clear()
+        self._sparkline.clear()
+        self._refresh_metrics()
+        self.update_global_status_label()
+        logging.info("Sync Stop sent, clock stopped.")
 
     def _beats_until_bar_one(self) -> int:
         """Return how many beats remain until the next bar beat 1 (beat_number == 1).
@@ -1540,22 +1616,23 @@ class MidiClockMainWindow(QWidget):
             if self._sync_start_pending:
                 beat_in_bar = ((beat_number - 1) % 4) + 1
                 if beat_in_bar == 1:
-                    # This IS bar beat 1 — fire Start
+                    # Bar beat 1 — fire MIDI Start, transition to RUNNING
                     self._sync_start_pending = False
                     self._sync_start_countdown = 0
+                    self._output_state = 'running'
                     self._countdown_label.setText("►")
-                    self._sync_status_label.setText("Device running — in sync!")
+                    self._sync_status_label.setText("Running — in sync!")
                     self._sync_status_label.setStyleSheet(
                         "color:#10b981;font-size:9pt;font-weight:bold;"
                     )
-                    self._sync_start_btn.setText("Sync Start")
+                    self._sync_start_btn.setText("▶   Start")
+                    self._sync_start_btn.setEnabled(False)
                     if hasattr(self.midi_clock_instance, 'send_start'):
                         self.midi_clock_instance.send_start()
-                    logging.info("Sync Start fired on bar beat 1.")
-                    # Flash countdown back to dash after 2s
+                    self.update_global_status_label()
+                    logging.info("Sync Start fired on bar beat 1 — output running.")
                     QTimer.singleShot(2000, lambda: self._countdown_label.setText("—"))
                 else:
-                    # Count down
                     beats_left = 4 - (beat_in_bar - 1)
                     self._sync_start_countdown = beats_left
                     self._countdown_label.setText(str(beats_left))
