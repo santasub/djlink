@@ -20,8 +20,10 @@ class SignalBridge(QObject):
     beat_signal              = Signal()
     prodj_beat_signal        = Signal(int, int)
     prodj_beat_timing_signal = Signal(int, int, object)
-    # Emitted when metadata for any player arrives (triggers track info bar refresh)
+        # Emitted when metadata for any player arrives (triggers track info bar refresh)
     metadata_ready_signal    = Signal()
+    # Emitted when waveform/beatgrid data is ready (args: request_type, data)
+    waveform_ready_signal    = Signal(str, object)
 
 class MidiClockApp:
     def __init__(self, args):

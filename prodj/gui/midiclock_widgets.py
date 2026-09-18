@@ -592,19 +592,9 @@ class MidiClockMainWindow(QWidget):
                     return None
 
             def _wf_cb(request, _src_pn, _slot, _tid, data):
-                """Called from DataProvider thread — must post to GUI thread via QTimer."""
-                if data is None:
-                    return
-                if request in ("color_preview_waveform", "preview_waveform"):
-                    bg = _get_beatgrid()
-                    QTimer.singleShot(0, lambda d=data, b=bg:
-                        self._waveform_widget.setData(d, beatgrid=b))
-                elif request == "beatgrid":
-                    QTimer.singleShot(0, lambda b=data: (
-                        self._waveform_widget.setData(
-                            self._waveform_widget._data, beatgrid=b
-                        ) if self._waveform_widget._data is not None else None
-                    ))
+                """Called from DataProvider thread — emit signal to GUI thread."""
+                if data is not None:
+                    self.signal_bridge.waveform_ready_signal.emit(request, data)
             self.prodj.data.get_color_preview_waveform(pn, sl, tid, _wf_cb)
             self.prodj.data.get_beatgrid(pn, sl, tid, _wf_cb)
 
@@ -625,6 +615,22 @@ class MidiClockMainWindow(QWidget):
         self._waveform_loaded_key = None
         self._track_key_label.setText("")
         self._track_duration_label.setText("")
+
+    def _on_waveform_ready(self, request: str, data) -> None:
+        """GUI-thread slot: called via waveform_ready_signal from DataProvider thread."""
+        if request in ("color_preview_waveform", "preview_waveform"):
+            # fetch beatgrid from store if already available
+            key = self._waveform_loaded_key
+            beatgrid = None
+            if key:
+                try:
+                    beatgrid = self.prodj.data.beatgrid_store[key]
+                except KeyError:
+                    pass
+            self._waveform_widget.setData(data, beatgrid=beatgrid)
+        elif request == "beatgrid":
+            if self._waveform_widget._data is not None:
+                self._waveform_widget.setData(self._waveform_widget._data, beatgrid=data)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -1270,6 +1276,7 @@ class MidiClockMainWindow(QWidget):
         self.signal_bridge.prodj_beat_signal.connect(self.handle_prodj_beat)
         self.signal_bridge.prodj_beat_timing_signal.connect(self.handle_prodj_beat_timing)
         self.signal_bridge.metadata_ready_signal.connect(self._refresh_track_info)
+        self.signal_bridge.waveform_ready_signal.connect(self._on_waveform_ready)
 
     def handle_client_or_master_change(self, player_number_changed=None):
         self.update_player_display()
