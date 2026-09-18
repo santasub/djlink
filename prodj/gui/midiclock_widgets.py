@@ -149,6 +149,7 @@ class _PreviewWaveformWidget(QWidget):
         self._beatgrid = None
         self._position = 0.0
         self._duration = 0.0       # track duration in seconds
+        self._bpm = 120.0          # current BPM for zoom calculation
         self._get_client_fn = None  # callable() -> client or None
         self._redraw.connect(self.update)
         self.setMinimumWidth(100)
@@ -159,10 +160,11 @@ class _PreviewWaveformWidget(QWidget):
         self._pos_timer.timeout.connect(self._interpolate_position)
         self._pos_timer.start()
 
-    def set_client_fn(self, fn, duration: float):
+    def set_client_fn(self, fn, duration: float, bpm: float = 120.0):
         """Register a callable that returns the active CDJ client object."""
         self._get_client_fn = fn
         self._duration = duration
+        self._bpm = bpm
 
     def _interpolate_position(self):
         """Called every 40ms — interpolate client position and redraw."""
@@ -272,8 +274,11 @@ class _PreviewWaveformWidget(QWidget):
             p.end()
             return
 
-        # 12% zoom, position centred
-        zoom = 0.12
+        # 8 beats visible, BPM-adaptive zoom
+        bpm = self._bpm if self._bpm > 0 else 120.0
+        beat_dur_s = 60.0 / bpm
+        dur = self._duration if self._duration > 0 else 300.0
+        zoom = min(0.15, max(0.01, (8 * beat_dur_s) / dur))
         half = zoom / 2
         view_start = max(0.0, self._position - half)
         view_end   = view_start + zoom
@@ -778,10 +783,11 @@ class MidiClockMainWindow(QWidget):
         # Register interpolation callback so waveform scrolls smoothly
         duration = getattr(client, "duration", None) or (dur if dur else None)
         if duration and duration > 0:
-            src = src  # capture
+            client_bpm = self._bpm_from_client(client) or 120.0
             self._waveform_widget.set_client_fn(
                 lambda s=src: self.prodj.cl.getClient(s),
-                duration
+                duration,
+                bpm=client_bpm
             )
 
     def _set_track_info_empty(self) -> None:
