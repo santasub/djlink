@@ -16,8 +16,8 @@ import json
 
 from qtpy.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox, QButtonGroup, QScrollArea,
-    QFrame, QPlainTextEdit, QSizePolicy
+    QPushButton, QLabel, QButtonGroup, QScrollArea,
+    QFrame, QPlainTextEdit, QSizePolicy, QDialog
 )
 from qtpy.QtCore import Qt, QProcess, QTimer
 from qtpy.QtGui import QFont
@@ -212,6 +212,19 @@ class LauncherWindow(QWidget):
         iface_header.addWidget(self._iface_status)
         root.addLayout(iface_header)
 
+        # Device IP display — large, selectable, easy to read for SSH
+        self._ip_label = QLabel("")
+        self._ip_label.setAlignment(Qt.AlignCenter)
+        self._ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._ip_label.setCursor(Qt.IBeamCursor)
+        self._ip_label.setStyleSheet(
+            "color:#fbbf24; font-size:18pt; font-weight:bold;"
+            "background:#1c1917; border:1px solid #44403c;"
+            "border-radius:6px; padding:4px 16px;"
+        )
+        self._ip_label.setFixedHeight(44)
+        root.addWidget(self._ip_label)
+
         # Scrollable row of interface buttons
         scroll = QScrollArea()
         scroll.setFixedHeight(90)
@@ -283,7 +296,7 @@ class LauncherWindow(QWidget):
             }
             QScrollBar::handle:vertical {
                 background: #374151;
-                border-radius: 6px;
+                border-rigkadius: 6px;
                 min-height: 20px;
             }
         """)
@@ -326,6 +339,7 @@ class LauncherWindow(QWidget):
             lbl = QLabel("No network interfaces found — retrying…")
             lbl.setStyleSheet("color:#ef4444; font-size:11pt;")
             self._iface_row.insertWidget(0, lbl)
+            self._ip_label.setText("Device IP:  —")
             self._btn_launch.setEnabled(False)
             self._set_status("Waiting for network interface…", "#f59e0b")
             return
@@ -374,12 +388,14 @@ class LauncherWindow(QWidget):
         selected_ip = next(ip for n, ip in ifaces if n == self._selected_iface)
         self._iface_buttons[self._selected_iface].setChecked(True)
         self._iface_status.setText(f"{self._selected_iface}  {selected_ip}")
+        self._ip_label.setText(f"Device IP:  {selected_ip}")
         self._btn_launch.setEnabled(True)
         self._set_status(f"Ready — launching on {self._selected_iface}.", "#10b981")
 
     def _select_iface(self, name: str, ip: str):
         self._selected_iface = name
         self._iface_status.setText(f"{name}  {ip}" if ip else name)
+        self._ip_label.setText(f"Device IP:  {ip}" if ip else "")
         self._prefs["iface"] = name
         _save_prefs(self._prefs)
         self._btn_launch.setEnabled(True)
@@ -470,43 +486,116 @@ class LauncherWindow(QWidget):
 
     def _update_finished(self, exit_code, _status):
         if exit_code == 0:
-            self._set_status("Update complete — relaunch the app to use the new version.", "#10b981")
+            self._set_status("Update complete — restart launcher to apply changes.", "#10b981")
             self._log_panel.appendPlainText("\n✔ Update complete.")
+            self._btn_close_log.setText("↺  Restart Launcher")
+            self._btn_close_log.setStyleSheet(
+                "QPushButton{background:#065f46;border:2px solid #10b981;"
+                "border-radius:10px;color:white;font-size:18pt;font-weight:700;}"
+                "QPushButton:pressed{background:#047857;}"
+            )
+            self._btn_close_log.clicked.disconnect()
+            self._btn_close_log.clicked.connect(self._restart_launcher)
         else:
             self._set_status(f"Update failed (exit code {exit_code}).", "#ef4444")
             self._log_panel.appendPlainText(f"\n✘ Failed (code {exit_code}).")
         logging.info("Update finished (code %d)", exit_code)
-        # Show a close button to dismiss the log and return to main view
         self._btn_close_log.setVisible(True)
+
+    def _restart_launcher(self):
+        """Relaunch this script detached, then exit the current process."""
+        python = os.path.join(_REPO_DIR, ".venv", "bin", "python3")
+        if not os.path.exists(python):
+            python = os.path.join(_REPO_DIR, ".venv", "Scripts", "python.exe")
+        if not os.path.exists(python):
+            python = sys.executable
+        script = os.path.join(_REPO_DIR, "launcher.py")
+        QProcess.startDetached(python, [script])
+        QApplication.quit()
 
     def _close_log(self):
         """Dismiss the update log and restore the main buttons."""
         self._log_panel.setVisible(False)
+        # Reset close button to default state for next update run
+        self._btn_close_log.setText("✕   Close Log")
+        self._btn_close_log.setStyleSheet("")
+        try:
+            self._btn_close_log.clicked.disconnect()
+        except Exception:
+            pass
+        self._btn_close_log.clicked.connect(self._close_log)
         self._btn_close_log.setVisible(False)
         self._btn_launch.setVisible(True)
         self._btn_update.setVisible(True)
         self._btn_reboot.setVisible(True)
         self._btn_shutdown.setVisible(True)
 
-    def _confirm(self, title: str, msg: str) -> bool:
-        dlg = QMessageBox(self)
+    def _confirm(self, title: str, msg: str, confirm_text: str = "Yes",
+                 confirm_color: str = "#065f46", confirm_border: str = "#10b981") -> bool:
+        """Full-size touch-friendly confirmation dialog — no system QMessageBox."""
+        dlg = QDialog(self)
         dlg.setWindowTitle(title)
-        dlg.setText(msg)
-        dlg.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
-        dlg.setDefaultButton(QMessageBox.Cancel)
+        dlg.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        dlg.setFixedSize(640, 300)
         dlg.setStyleSheet("""
-            QMessageBox { background:#1f2937; color:#e5e7eb; }
-            QPushButton { min-width:120px; min-height:50px; font-size:14pt; }
+            QDialog {
+                background: #1f2937;
+                border: 2px solid #374151;
+                border-radius: 14px;
+            }
         """)
-        return dlg.exec_() == QMessageBox.Yes
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(40, 32, 40, 32)
+        layout.setSpacing(24)
+
+        lbl_title = QLabel(title)
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("color:#f9fafb;font-size:20pt;font-weight:bold;")
+        layout.addWidget(lbl_title)
+
+        lbl_msg = QLabel(msg)
+        lbl_msg.setAlignment(Qt.AlignCenter)
+        lbl_msg.setStyleSheet("color:#9ca3af;font-size:14pt;")
+        lbl_msg.setWordWrap(True)
+        layout.addWidget(lbl_msg)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(20)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setMinimumHeight(80)
+        btn_cancel.setStyleSheet(
+            "QPushButton{background:#374151;border:2px solid #4b5563;"
+            "border-radius:10px;color:#e5e7eb;font-size:16pt;font-weight:700;}"
+            "QPushButton:pressed{background:#4b5563;}"
+        )
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_row.addWidget(btn_cancel)
+
+        btn_ok = QPushButton(confirm_text)
+        btn_ok.setMinimumHeight(80)
+        btn_ok.setStyleSheet(
+            f"QPushButton{{background:{confirm_color};border:2px solid {confirm_border};"
+            "border-radius:10px;color:white;font-size:16pt;font-weight:700;}"
+            f"QPushButton:pressed{{background:{confirm_border};}}"
+        )
+        btn_ok.clicked.connect(dlg.accept)
+        btn_row.addWidget(btn_ok)
+
+        layout.addLayout(btn_row)
+        return dlg.exec_() == QDialog.Accepted
 
     def reboot(self):
-        if self._confirm("Reboot", "Reboot the device now?"):
-            subprocess.run(["sudo", "reboot"])
+        if self._confirm("Reboot", "Reboot the device now?",
+                         confirm_text="Reboot", confirm_color="#78350f",
+                         confirm_border="#f59e0b"):
+            subprocess.Popen(["sudo", "reboot"])
 
     def shutdown(self):
-        if self._confirm("Shutdown", "Shut down the device now?"):
-            subprocess.run(["sudo", "shutdown", "-h", "now"])
+        if self._confirm("Shutdown", "Shut down the device now?",
+                         confirm_text="Shutdown", confirm_color="#450a0a",
+                         confirm_border="#ef4444"):
+            subprocess.Popen(["sudo", "shutdown", "-h", "now"])
 
 
 if __name__ == "__main__":
