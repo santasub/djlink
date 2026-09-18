@@ -32,6 +32,14 @@ class MidiClock(Thread):
     with self._bpm_lock:
       return self._delay
 
+  @property
+  def queue_latency_ms(self) -> float:
+    """Approximate latency introduced by the ALSA pre-queue in milliseconds.
+    The queue holds enqueue_at_once ticks ahead; at current BPM that equals
+    enqueue_at_once * delay seconds of lookahead."""
+    with self._bpm_lock:
+      return self.enqueue_at_once * self._delay * 1000.0
+
   # this may only be called after creating this object
   def iter_alsa_seq_clients(self):
     client_re = re.compile('Client[ ]+(\d+) : "(.*)"')

@@ -192,7 +192,7 @@ class MidiClockMainWindow(QWidget):
         # Auto phase correction state
         self.auto_phase_correction_enabled = True
         self.phase_error_ms = 0.0          # last measured phase error in ms
-        self.phase_correction_strength = 0.4  # 0.0-1.0, how aggressively we correct
+        self.phase_correction_strength = 0.3  # 0.0-1.0, how aggressively we correct per beat
         self.phase_error_history = []      # rolling history for smoothing
         self.PHASE_HISTORY_LEN = 4
         self._grid_offset_ms = 0.0         # persistent manual offset, survives auto-sync corrections
@@ -1513,13 +1513,22 @@ class MidiClockMainWindow(QWidget):
         if beat_period_ms <= 0:
             return
 
-        # The CDJ just fired beat N.  next_beat_ms tells us how long until beat N+1.
-        # We want our MIDI clock beat boundary to land at the same time.
-        # Error: how far ahead/behind is next_beat_ms from one full beat period?
-        # If next_beat_ms == beat_period_ms  → perfect alignment
-        # If next_beat_ms <  beat_period_ms  → we're running SLOW  (MIDI next beat is too late)
-        # If next_beat_ms >  beat_period_ms  → we're running FAST  (MIDI next beat is too early)
+        # ── Phase error calculation ───────────────────────────────────────
+        # next_beat_ms: time (ms) from NOW until the CDJ's next beat.
+        # Our MIDI clock fires its next beat in (beat_period_ms - elapsed_since_last_tick) ms.
+        # We approximate: our next beat is in beat_period_ms ms from now.
+        #
+        # error > 0: CDJ next beat is LATER than our next beat  → we are AHEAD → nudge later (+)
+        # error < 0: CDJ next beat is EARLIER than our next beat → we are BEHIND → nudge earlier (-)
         raw_error_ms = next_beat_ms - beat_period_ms
+
+        # Compensate for ALSA queue lookahead: events are pre-queued N ticks ahead.
+        # adjust_phase shifts future queue entries, so our correction takes effect
+        # one queue-length from now. We need to account for this latency offset.
+        queue_latency_ms = 0.0
+        if hasattr(self.midi_clock_instance, 'queue_latency_ms'):
+            queue_latency_ms = self.midi_clock_instance.queue_latency_ms
+        raw_error_ms -= queue_latency_ms
 
         # Wrap to ±half a beat period so we always take the shortest path
         while raw_error_ms > beat_period_ms / 2:
@@ -1527,30 +1536,33 @@ class MidiClockMainWindow(QWidget):
         while raw_error_ms < -beat_period_ms / 2:
             raw_error_ms += beat_period_ms
 
-        # Smooth over last N beats
-        self.phase_error_history.append(raw_error_ms)
+        # Apply manual grid offset: shift the target by _grid_offset_ms.
+        # e.g. offset=+10ms means we WANT our beat 10ms after the CDJ beat.
+        target_error_ms = raw_error_ms - self._grid_offset_ms
+
+        # Smooth over last N beats to avoid overcorrecting on jitter
+        self.phase_error_history.append(target_error_ms)
         if len(self.phase_error_history) > self.PHASE_HISTORY_LEN:
             self.phase_error_history.pop(0)
         smoothed_error_ms = sum(self.phase_error_history) / len(self.phase_error_history)
 
-        # Apply a fraction of the raw phase error as correction.
-        # Subtract the manual offset from the measured error so Auto-Sync
-        # treats the user-chosen offset position as the new "zero" target.
-        corrected_error_ms = smoothed_error_ms - self._grid_offset_ms
-        correction_ms = corrected_error_ms * self.phase_correction_strength
+        # Apply a fraction of the smoothed error as correction each beat.
+        # strength=0.3 means we close 30% of the gap per beat — stable convergence.
+        correction_ms = smoothed_error_ms * self.phase_correction_strength
 
-        self.phase_error_ms = smoothed_error_ms
+        self.phase_error_ms = raw_error_ms   # show raw error (without offset) in UI
         self.midi_clock_instance.adjust_phase(correction_ms)
 
         # Update the sparkline history used by the metrics panel
-        self._sparkline.append(round(smoothed_error_ms, 1))
+        self._sparkline.append(round(raw_error_ms, 1))
         if len(self._sparkline) > _SPARKLINE_LEN:
             self._sparkline.pop(0)
 
         logging.debug(
-            "Phase correction: next_beat=%.1f ms, beat_period=%.1f ms, "
-            "error=%.2f ms, correction=%.2f ms",
-            next_beat_ms, beat_period_ms, smoothed_error_ms, correction_ms
+            "Phase correction: next_beat=%.1f ms beat_period=%.1f ms "
+            "queue_lat=%.1f ms raw_err=%.2f ms target_err=%.2f ms correction=%.2f ms",
+            next_beat_ms, beat_period_ms, queue_latency_ms,
+            raw_error_ms, smoothed_error_ms, correction_ms
         )
 
         # Update phase error display in UI
