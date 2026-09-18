@@ -205,7 +205,8 @@ class MidiClockMainWindow(QWidget):
 
         # Sync Start count-in state
         self._sync_start_pending = False   # waiting for bar beat 1
-        self._sync_start_countdown = 0     # beats remaining until bar beat 1
+        self._sync_start_countdown = 0     # CDJ beats remaining until we fire send_start()
+        self._sync_beats_seen = 0          # CDJ beats received since arm (for absolute counting)
         # Clock output state: 'stopped' | 'waiting' | 'running'
         self._output_state = 'stopped'
 
@@ -1546,12 +1547,13 @@ class MidiClockMainWindow(QWidget):
 
         self._output_state = 'waiting'
         self._sync_start_pending = True
+        self._sync_beats_seen = 0
         self._midi_port_btn.setEnabled(False)
         self._sync_stop_btn.setEnabled(True)
         self._sync_start_btn.setText("✕   Cancel")
         self._sync_start_btn.setStyleSheet(
             "QPushButton{background:#78350f;border:2px solid #f59e0b;"
-            "border-radius:8px;color:white;font-size:14pt;font-weight:bold;}"
+            "border-radius:8px;color:white;font-size:11pt;font-weight:bold;}"
             "QPushButton:pressed{background:#92400e;}"
         )
         beats_left = self._beats_until_bar_one()
@@ -1594,16 +1596,23 @@ class MidiClockMainWindow(QWidget):
         logging.info("Sync Stop sent, clock stopped.")
 
     def _beats_until_bar_one(self) -> int:
-        """Return how many beats remain until the next bar beat 1 (beat_number == 1).
-        A bar is 4 beats. beat_number from CDJ is 1-based within the bar (1..4).
-        Returns 0 if we are already on beat 1."""
+        """Return how many CDJ beats to wait before firing send_start().
+
+        The CDJ sends beat 1..4 (bar position).  We want to fire exactly on
+        the *next* beat-1 so the external device starts aligned to the bar.
+
+        We NEVER fire immediately (min wait = 1 beat) so the user always sees
+        at least '1' in the countdown — avoids a zero-latency race where the
+        button-click and the incoming beat-1 packet collide.
+        """
         bn = self._last_beat_number
         if bn <= 0:
-            return 4  # no beat received yet, assume full bar
-        beat_in_bar = ((bn - 1) % 4) + 1  # 1..4
-        if beat_in_bar == 1:
-            return 4  # just fired beat 1, next bar is 4 beats away
-        return 4 - (beat_in_bar - 1)  # beats remaining to complete the bar
+            return 4  # no beat received yet — wait a full bar
+        beat_in_bar = ((bn - 1) % 4) + 1  # normalise to 1..4
+        # beats remaining to finish the current bar (min 1 so we never fire
+        # on the same beat that was just received)
+        remaining = 4 - (beat_in_bar - 1)   # 4 on beat1, 3 on beat2, 2 on beat3, 1 on beat4
+        return remaining
 
     def handle_prodj_beat(self, player_number: int, beat_number: int) -> None:
         """Track the beat timestamp and bar position for the active source."""
@@ -1614,10 +1623,19 @@ class MidiClockMainWindow(QWidget):
             self._last_beat_player = player_number
 
             # ── Sync Start count-in ──────────────────────────────────────
+            # We count *received* CDJ beats since the button was pressed.
+            # This is purely absolute — independent of bar position — so
+            # there is no race between the button-click and an incoming
+            # beat-1 packet arriving at the same moment.
             if self._sync_start_pending:
-                beat_in_bar = ((beat_number - 1) % 4) + 1
-                if beat_in_bar == 1:
-                    # Bar beat 1 — fire MIDI Start, transition to RUNNING
+                self._sync_beats_seen += 1
+                self._sync_start_countdown -= 1
+                remaining = self._sync_start_countdown
+                logging.debug("Count-in: beat seen #%d, %d remaining.",
+                              self._sync_beats_seen, remaining)
+
+                if remaining <= 0:
+                    # Countdown reached zero — fire MIDI Start now.
                     self._sync_start_pending = False
                     self._sync_start_countdown = 0
                     self._output_state = 'running'
@@ -1626,18 +1644,16 @@ class MidiClockMainWindow(QWidget):
                     self._sync_status_label.setStyleSheet(
                         "color:#10b981;font-size:9pt;font-weight:bold;"
                     )
-                    self._sync_start_btn.setText("▶   Start")
+                    self._sync_start_btn.setText("▶   Start & Sync")
                     self._sync_start_btn.setEnabled(False)
                     if hasattr(self.midi_clock_instance, 'send_start'):
                         self.midi_clock_instance.send_start()
                     self.update_global_status_label()
-                    logging.info("Sync Start fired on bar beat 1 — output running.")
+                    logging.info("Sync Start fired after %d beats — output running.",
+                                 self._sync_beats_seen)
                     QTimer.singleShot(2000, lambda: self._countdown_label.setText("—"))
                 else:
-                    beats_left = 4 - (beat_in_bar - 1)
-                    self._sync_start_countdown = beats_left
-                    self._countdown_label.setText(str(beats_left))
-                    logging.debug("Count-in: %d beats to bar 1.", beats_left)
+                    self._countdown_label.setText(str(remaining))
 
     def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
         """Called on every beat packet from the CDJ with exact next_beat distance in ms.
