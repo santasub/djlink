@@ -287,6 +287,7 @@ class MidiClockMainWindow(QWidget):
         self._last_applied_bpm = None  # guards against redundant setBpm calls
         self.MidiClockImpl = None
         self._beat_snap_pending = False  # one-shot grid snap on next beat packet
+        self._waveform_loaded_key = None  # (pn, sl, tid) of last requested waveform
 
         # Sync Start count-in state
         self._sync_start_pending = False   # waiting for bar beat 1
@@ -580,7 +581,10 @@ class MidiClockMainWindow(QWidget):
         pn  = client.loaded_player_number
         sl  = client.loaded_slot
         tid = client.track_id
-        if tid and tid != 0:
+        if tid and tid != 0 and (pn, sl, tid) != self._waveform_loaded_key:
+            self._waveform_loaded_key = (pn, sl, tid)
+            self._waveform_widget.clear()
+
             def _get_beatgrid():
                 try:
                     return self.prodj.data.beatgrid_store[(pn, sl, tid)]
@@ -618,6 +622,7 @@ class MidiClockMainWindow(QWidget):
         self._track_title_label.setText("No track")
         self._track_artist_label.setText("")
         self._waveform_widget.clear()
+        self._waveform_loaded_key = None
         self._track_key_label.setText("")
         self._track_duration_label.setText("")
 
