@@ -160,13 +160,15 @@ class MidiClock(Thread):
   def send_start(self):
     """Send MIDI Start (0xFA) — tells slaved devices to begin playback from position 0."""
     # ALSA sequencer event type 10 = SND_SEQ_EVENT_START
-    alsaseq.output((10, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), None))
+    # data field requires a 6-element tuple (alsaseq C extension requirement)
+    alsaseq.output((10, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), (0, 0, 0, 0, 0, 0)))
     logging.info("alsaseq: MIDI Start (0xFA) sent")
 
   def send_stop(self):
     """Send MIDI Stop (0xFC) — tells slaved devices to stop playback."""
     # ALSA sequencer event type 12 = SND_SEQ_EVENT_STOP
-    alsaseq.output((12, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), None))
+    # data field requires a 6-element tuple (alsaseq C extension requirement)
+    alsaseq.output((12, 0, 0, 0, (0, 0), (0, 0), (self.client_id, self.client_port), (0, 0, 0, 0, 0, 0)))
     logging.info("alsaseq: MIDI Stop (0xFC) sent")
 
 if __name__ == "__main__":
