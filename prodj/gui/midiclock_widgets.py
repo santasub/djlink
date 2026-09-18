@@ -40,30 +40,26 @@ _LED_OFF          = "#374151"   # inactive
 _LED_OFF_BORDER   = "#4b5563"
 
 
-class _WaveformZoomDialog(QDialog):
-    """Fullwidth popup showing a zoomed waveform with all beatgrid markers.
-    Click anywhere to close.
+class _WaveformZoomOverlay(QWidget):
+    """Fullwidth overlay drawn directly on the top-level window.
+    Tap anywhere to dismiss — no modal, no event blocking.
     """
-    def __init__(self, data, beatgrid, position, parent=None):
-        super().__init__(parent, Qt.FramelessWindowHint | Qt.Dialog)
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
-        self.setFixedSize(1280, 280)
-        self.setStyleSheet("background:#0d1117;border:2px solid #1e3a5f;")
+    def __init__(self, data, beatgrid, position, top_window):
+        super().__init__(top_window)          # child of main window
         self._data = data
         self._beatgrid = beatgrid
         self._position = position
-        # centre vertically over parent
-        if parent:
-            pp = parent.mapToGlobal(parent.rect().topLeft())
-            # find top-level window
-            top = parent
-            while top.parent():
-                top = top.parent()
-            gp = top.geometry()
-            self.move(gp.left(), gp.top() + (gp.height() - 280) // 2)
+        H = 280
+        gp = top_window.rect()
+        self.setGeometry(0, (gp.height() - H) // 2, gp.width(), H)
+        self.setStyleSheet("background:#0d1117;")
+        self.setCursor(Qt.PointingHandCursor)
+        self.raise_()
+        self.show()
 
     def mousePressEvent(self, _e):
-        self.accept()
+        self.hide()
+        self.deleteLater()
 
     def _get_beats(self):
         if not self._beatgrid:
@@ -213,11 +209,12 @@ class _PreviewWaveformWidget(QWidget):
         return px
 
     def mousePressEvent(self, _e):
-        dlg = _WaveformZoomDialog(
-            self._data, self._beatgrid, self._position,
-            parent=self
-        )
-        dlg.exec_()
+        if self._data is None:
+            return
+        top = self
+        while top.parent():
+            top = top.parent()
+        _WaveformZoomOverlay(self._data, self._beatgrid, self._position, top)
 
     def paintEvent(self, _e):
         p = QPainter(self)
