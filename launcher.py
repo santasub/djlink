@@ -171,7 +171,7 @@ class LauncherWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ProDJ Link — Launcher")
-        self.setFixedSize(1280, 720)
+        self.setWindowFlags(Qt.FramelessWindowHint)
         self._process = None
         self._prefs = _load_prefs()
         self._selected_iface = self._prefs.get("iface", "")
@@ -211,19 +211,6 @@ class LauncherWindow(QWidget):
         self._iface_status.setStyleSheet("color:#6b7280; font-size:10pt;")
         iface_header.addWidget(self._iface_status)
         root.addLayout(iface_header)
-
-        # Device IP display — large, selectable, easy to read for SSH
-        self._ip_label = QLabel("")
-        self._ip_label.setAlignment(Qt.AlignCenter)
-        self._ip_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._ip_label.setCursor(Qt.IBeamCursor)
-        self._ip_label.setStyleSheet(
-            "color:#fbbf24; font-size:18pt; font-weight:bold;"
-            "background:#1c1917; border:1px solid #44403c;"
-            "border-radius:6px; padding:4px 16px;"
-        )
-        self._ip_label.setFixedHeight(44)
-        root.addWidget(self._ip_label)
 
         # Scrollable row of interface buttons
         scroll = QScrollArea()
@@ -339,7 +326,6 @@ class LauncherWindow(QWidget):
             lbl = QLabel("No network interfaces found — retrying…")
             lbl.setStyleSheet("color:#ef4444; font-size:11pt;")
             self._iface_row.insertWidget(0, lbl)
-            self._ip_label.setText("Device IP:  —")
             self._btn_launch.setEnabled(False)
             self._set_status("Waiting for network interface…", "#f59e0b")
             return
@@ -388,14 +374,12 @@ class LauncherWindow(QWidget):
         selected_ip = next(ip for n, ip in ifaces if n == self._selected_iface)
         self._iface_buttons[self._selected_iface].setChecked(True)
         self._iface_status.setText(f"{self._selected_iface}  {selected_ip}")
-        self._ip_label.setText(f"Device IP:  {selected_ip}")
         self._btn_launch.setEnabled(True)
         self._set_status(f"Ready — launching on {self._selected_iface}.", "#10b981")
 
     def _select_iface(self, name: str, ip: str):
         self._selected_iface = name
         self._iface_status.setText(f"{name}  {ip}" if ip else name)
-        self._ip_label.setText(f"Device IP:  {ip}" if ip else "")
         self._prefs["iface"] = name
         _save_prefs(self._prefs)
         self._btn_launch.setEnabled(True)
