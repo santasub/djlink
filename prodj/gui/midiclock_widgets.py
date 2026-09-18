@@ -148,10 +148,44 @@ class _PreviewWaveformWidget(QWidget):
         self._data = None
         self._beatgrid = None
         self._position = 0.0
-        self._pixmap = None
+        self._duration = 0.0       # track duration in seconds
+        self._get_client_fn = None  # callable() -> client or None
         self._redraw.connect(self.update)
         self.setMinimumWidth(100)
         self.setCursor(Qt.PointingHandCursor)
+        # 40ms timer (~25fps) for smooth position interpolation
+        self._pos_timer = QTimer(self)
+        self._pos_timer.setInterval(40)
+        self._pos_timer.timeout.connect(self._interpolate_position)
+        self._pos_timer.start()
+
+    def set_client_fn(self, fn, duration: float):
+        """Register a callable that returns the active CDJ client object."""
+        self._get_client_fn = fn
+        self._duration = duration
+
+    def _interpolate_position(self):
+        """Called every 40ms — interpolate client position and redraw."""
+        if self._data is None or self._get_client_fn is None:
+            return
+        client = self._get_client_fn()
+        if client is None:
+            return
+        dur = self._duration
+        if dur and dur > 0:
+            pos = getattr(client, 'position', None)
+            if pos is not None:
+                # linear interpolation since last position_timestamp
+                import time as _time
+                ts = getattr(client, 'position_timestamp', None)
+                pitch = getattr(client, 'actual_pitch', 1.0) or 1.0
+                play_state = getattr(client, 'play_state', '')
+                if ts and play_state == 'playing':
+                    pos = pos + pitch * (_time.time() - ts)
+                rel = max(0.0, min(1.0, pos / dur))
+                if abs(rel - self._position) > 0.0001:
+                    self._position = rel
+                    self.update()
 
     def setData(self, data, beatgrid=None):
         self._data = data
@@ -238,8 +272,8 @@ class _PreviewWaveformWidget(QWidget):
             p.end()
             return
 
-        # 5% zoom, position centred
-        zoom = 0.05
+        # 12% zoom, position centred
+        zoom = 0.12
         half = zoom / 2
         view_start = max(0.0, self._position - half)
         view_end   = view_start + zoom
@@ -741,11 +775,14 @@ class MidiClockMainWindow(QWidget):
             self.prodj.data.get_color_preview_waveform(pn, sl, tid, _wf_cb)
             self.prodj.data.get_beatgrid(pn, sl, tid, _wf_cb)
 
-        # Update waveform position from client
+        # Register interpolation callback so waveform scrolls smoothly
         duration = getattr(client, "duration", None) or (dur if dur else None)
-        position = getattr(client, "position", None)
-        if position is not None and duration and duration > 0:
-            self._waveform_widget.setPosition(position / duration)
+        if duration and duration > 0:
+            src = src  # capture
+            self._waveform_widget.set_client_fn(
+                lambda s=src: self.prodj.cl.getClient(s),
+                duration
+            )
 
     def _set_track_info_empty(self) -> None:
         """Reset all track info bar widgets to their idle state."""
