@@ -5,7 +5,7 @@ from typing import Optional, List, Tuple, Dict
 from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
-                             QMessageBox, QDoubleSpinBox)
+                             QMessageBox, QDoubleSpinBox, QScrollArea)
 from qtpy.QtCore import Qt, Signal, QTimer
 
 # MIDI Clock imports
