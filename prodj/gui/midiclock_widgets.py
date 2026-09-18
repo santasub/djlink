@@ -1113,6 +1113,9 @@ class MidiClockMainWindow(QWidget):
         ctrl_grid.setColumnStretch(2, 1)
 
         # ── Col 0: Clock Source ───────────────────────────────────────────
+        col0_layout = QVBoxLayout()
+        col0_layout.setSpacing(4)
+
         source_group = QGroupBox("Clock Source")
         source_layout = QVBoxLayout()
         source_layout.setContentsMargins(8, 6, 8, 8)
@@ -1148,19 +1151,22 @@ class MidiClockMainWindow(QWidget):
         source_layout.addWidget(self.active_source_label)
         source_group.setLayout(source_layout)
 
-        # Now Playing: player badges + waveform + track info
-        nowplaying_group = QGroupBox("Now Playing")
-        np_layout = QVBoxLayout()
-        np_layout.setContentsMargins(8, 6, 8, 8)
-        np_layout.setSpacing(4)
+        # Player tiles strip (the big 100px tiles with BPM)
         self.player_grid_layout = QGridLayout()
         self.player_grid_layout.setContentsMargins(0, 0, 0, 0)
         self.player_grid_layout.setSpacing(4)
         for _col in range(4):
             self.player_grid_layout.setColumnStretch(_col, 1)
-        np_layout.addLayout(self.player_grid_layout)
+        col0_layout.addLayout(self.player_grid_layout)
+
+        # Now Playing: waveform + track info only
+        nowplaying_group = QGroupBox("Now Playing")
+        nowplaying_group.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        np_layout = QVBoxLayout()
+        np_layout.setContentsMargins(8, 6, 8, 8)
+        np_layout.setSpacing(4)
         self._waveform_widget = _PreviewWaveformWidget()
-        self._waveform_widget.setFixedHeight(90)
+        self._waveform_widget.setFixedHeight(80)
         self._waveform_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         np_layout.addWidget(self._waveform_widget)
         track_bar = QHBoxLayout()
@@ -1197,8 +1203,6 @@ class MidiClockMainWindow(QWidget):
         np_layout.addLayout(track_bar)
         nowplaying_group.setLayout(np_layout)
 
-        col0_layout = QVBoxLayout()
-        col0_layout.setSpacing(6)
         col0_layout.addWidget(source_group)
         col0_layout.addWidget(nowplaying_group, stretch=1)
         ctrl_grid.addLayout(col0_layout, 0, 0)
@@ -1584,10 +1588,9 @@ class MidiClockMainWindow(QWidget):
             else:
                 tile = self.player_tiles[pn]
 
-            # Ensure tile is in the correct grid cell (row 0, col = sorted index)
+            # Ensure tile is in the correct grid cell
             idx = self.player_grid_layout.indexOf(tile)
             if idx == -1:
-                # Not yet in layout
                 self.player_grid_layout.addWidget(tile, 0, grid_col)
             else:
                 r, c, *_ = self.player_grid_layout.getItemPosition(idx)
@@ -1607,35 +1610,6 @@ class MidiClockMainWindow(QWidget):
                 is_master="master" in client.state,
             )
             tile.set_selected_source(self.selected_player_source == pn)
-
-            # ── Compact badge in Now Playing panel ────────────────────
-            if pn not in self._compact_badges:
-                badge = _CompactPlayerBadge(pn)
-                badge.selected_signal.connect(self.handle_player_tile_selected)
-                self._compact_badges[pn] = badge
-                self.player_grid_layout.addWidget(badge, 0, grid_col)
-            else:
-                badge = self._compact_badges[pn]
-                bidx = self.player_grid_layout.indexOf(badge)
-                if bidx == -1:
-                    self.player_grid_layout.addWidget(badge, 0, grid_col)
-                else:
-                    br, bc, *_ = self.player_grid_layout.getItemPosition(bidx)
-                    if bc != grid_col:
-                        self.player_grid_layout.removeWidget(badge)
-                        self.player_grid_layout.addWidget(badge, 0, grid_col)
-            badge.update_data(
-                bpm=effective_bpm,
-                is_master="master" in client.state,
-                is_selected=self.selected_player_source == pn,
-                play_state=getattr(client, 'play_state', ''),
-                is_dropped=tile.is_dropped,
-            )
-
-        # Update dropped badges
-        for pn, badge in self._compact_badges.items():
-            if pn not in {c.player_number for c in sorted_clients}:
-                badge.update_data(0, False, False, '', True)
 
         self.update_global_status_label()
 
