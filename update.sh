@@ -13,7 +13,7 @@ set -e
 # ============================================================
 # CONFIG — edit these if you forked the repo or use a branch
 # ============================================================
-GIT_BRANCH="main"                 # branch to pull
+GIT_BRANCH="${GIT_BRANCH:-main}"   # branch to pull — overridden by launcher via env
 RTMIDI_VERSION="1.5.8"            # pinned python-rtmidi version
 # ============================================================
 

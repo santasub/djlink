@@ -13,17 +13,21 @@ import struct
 import subprocess
 import logging
 import json
+import urllib.request
+import urllib.error
 
 from qtpy.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QButtonGroup, QScrollArea,
     QFrame, QPlainTextEdit, QSizePolicy, QDialog
 )
-from qtpy.QtCore import Qt, QProcess, QTimer
+from qtpy.QtCore import Qt, QProcess, QTimer, QThread, Signal
 from qtpy.QtGui import QFont
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 _PREFS_FILE = os.path.join(_REPO_DIR, ".launcher_prefs.json")
+_GITHUB_REPO = "santasub/djlink"             # GitHub repo für Branch-Liste
+_DEFAULT_BRANCH = "main"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -143,6 +147,175 @@ def _save_prefs(prefs: dict):
         pass
 
 
+# ── Branch fetch (background thread) ────────────────────────────────────────
+
+class _BranchFetcher(QThread):
+    """Fetches branch list from GitHub API in a background thread."""
+    finished = Signal(list)   # emits list[str] of branch names
+    error    = Signal(str)    # emits error message
+
+    def run(self):
+        url = f"https://api.github.com/repos/{_GITHUB_REPO}/branches?per_page=100"
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
+                                                       "User-Agent": "prodj-launcher/1.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode())
+            branches = [b["name"] for b in data]
+            self.finished.emit(branches)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ── Branch selector dialog ────────────────────────────────────────────────────
+
+class BranchSelectDialog(QDialog):
+    """Touch-friendly modal that lets the user pick a git branch."""
+
+    def __init__(self, current_branch: str, parent=None):
+        super().__init__(parent)
+        self._selected = current_branch
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setFixedSize(700, 460)
+        self.setStyleSheet("""
+            QDialog {
+                background: #1f2937;
+                border: 2px solid #374151;
+                border-radius: 14px;
+            }
+        """)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(36, 28, 36, 28)
+        root.setSpacing(16)
+
+        # Title
+        lbl_title = QLabel("Select Update Branch")
+        lbl_title.setAlignment(Qt.AlignCenter)
+        lbl_title.setStyleSheet("color:#7dd3fc;font-size:18pt;font-weight:bold;")
+        root.addWidget(lbl_title)
+
+        lbl_sub = QLabel("Changes take effect on next  ⟳ Update")
+        lbl_sub.setAlignment(Qt.AlignCenter)
+        lbl_sub.setStyleSheet("color:#6b7280;font-size:10pt;")
+        root.addWidget(lbl_sub)
+
+        # Scrollable branch list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical {
+                background: #111827; width: 14px; border-radius: 7px;
+            }
+            QScrollBar::handle:vertical {
+                background: #374151; border-radius: 7px; min-height: 30px;
+            }
+        """)
+        self._list_widget = QWidget()
+        self._list_widget.setStyleSheet("background: transparent;")
+        self._list_layout = QVBoxLayout(self._list_widget)
+        self._list_layout.setSpacing(8)
+        self._list_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(self._list_widget)
+        root.addWidget(scroll, 1)
+
+        # Loading indicator
+        self._lbl_loading = QLabel("Fetching branches from GitHub…")
+        self._lbl_loading.setAlignment(Qt.AlignCenter)
+        self._lbl_loading.setStyleSheet("color:#9ca3af;font-size:12pt;")
+        self._list_layout.addWidget(self._lbl_loading)
+        self._list_layout.addStretch()
+
+        # Bottom row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(16)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.setMinimumHeight(72)
+        btn_cancel.setStyleSheet(
+            "QPushButton{background:#374151;border:2px solid #4b5563;"
+            "border-radius:10px;color:#e5e7eb;font-size:15pt;font-weight:700;}"
+            "QPushButton:pressed{background:#4b5563;}"
+        )
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+
+        self._btn_ok = QPushButton("Use this branch")
+        self._btn_ok.setMinimumHeight(72)
+        self._btn_ok.setStyleSheet(
+            "QPushButton{background:#1e3a5f;border:2px solid #0ea5e9;"
+            "border-radius:10px;color:white;font-size:15pt;font-weight:700;}"
+            "QPushButton:pressed{background:#0ea5e9;}"
+        )
+        self._btn_ok.clicked.connect(self.accept)
+        btn_row.addWidget(self._btn_ok)
+
+        root.addLayout(btn_row)
+
+        self._branch_group = QButtonGroup(self)
+        self._branch_group.setExclusive(True)
+
+        # Start background fetch
+        self._fetcher = _BranchFetcher(self)
+        self._fetcher.finished.connect(self._on_branches)
+        self._fetcher.error.connect(self._on_error)
+        self._fetcher.start()
+
+    def selected_branch(self) -> str:
+        return self._selected
+
+    def _on_branches(self, branches: list):
+        # Remove loading label
+        self._lbl_loading.deleteLater()
+        # Remove the trailing stretch
+        item = self._list_layout.takeAt(self._list_layout.count() - 1)
+        if item:
+            del item
+
+        for name in branches:
+            btn = QPushButton(name)
+            btn.setCheckable(True)
+            btn.setMinimumHeight(58)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #111827;
+                    border: 2px solid #374151;
+                    border-radius: 8px;
+                    color: #e5e7eb;
+                    font-size: 13pt;
+                    font-weight: 600;
+                    text-align: left;
+                    padding: 0 16px;
+                }
+                QPushButton:hover  { border: 2px solid #0ea5e9; }
+                QPushButton:checked {
+                    background: #0c4a6e;
+                    border: 2px solid #0ea5e9;
+                    color: #7dd3fc;
+                    font-weight: 700;
+                }
+            """)
+            btn.clicked.connect(lambda checked, n=name: self._pick(n))
+            self._branch_group.addButton(btn)
+            self._list_layout.addWidget(btn)
+            if name == self._selected:
+                btn.setChecked(True)
+
+        self._list_layout.addStretch()
+
+    def _on_error(self, msg: str):
+        self._lbl_loading.setText(f"Could not fetch branches:\n{msg}")
+        self._lbl_loading.setStyleSheet("color:#ef4444;font-size:11pt;")
+
+    def _pick(self, name: str):
+        self._selected = name
+
+
+# ── Button factory ────────────────────────────────────────────────────────────
+
 def _make_btn(text: str, color: str, border: str, height: int = 100) -> QPushButton:
     b = QPushButton(text)
     b.setMinimumHeight(height)
@@ -175,6 +348,7 @@ class LauncherWindow(QWidget):
         self._process = None
         self._prefs = _load_prefs()
         self._selected_iface = self._prefs.get("iface", "")
+        self._selected_branch = self._prefs.get("branch", _DEFAULT_BRANCH)
         self._iface_buttons = {}   # name -> QPushButton
         self._known_ifaces = []    # last seen (name, ip) list — used to detect changes
 
@@ -235,9 +409,22 @@ class LauncherWindow(QWidget):
         self._btn_launch.setEnabled(False)
         root.addWidget(self._btn_launch)
 
+        # Update row: update button + branch selector
+        update_row = QHBoxLayout()
+        update_row.setSpacing(10)
         self._btn_update = _make_btn("⟳   Update App", "#1e3a5f", "#0ea5e9", 90)
         self._btn_update.clicked.connect(self.update_app)
-        root.addWidget(self._btn_update)
+        update_row.addWidget(self._btn_update, 1)
+
+        self._btn_branch = QPushButton(self._selected_branch)
+        self._btn_branch.setMinimumHeight(90)
+        self._btn_branch.setMinimumWidth(160)
+        self._btn_branch.setCursor(Qt.PointingHandCursor)
+        self._btn_branch.setToolTip("Select branch to update from")
+        self._btn_branch.clicked.connect(self._select_branch)
+        self._update_branch_btn_style()
+        update_row.addWidget(self._btn_branch)
+        root.addLayout(update_row)
 
         sys_row = QHBoxLayout()
         sys_row.setSpacing(16)
@@ -422,6 +609,42 @@ class LauncherWindow(QWidget):
             "#10b981" if exit_code == 0 else "#ef4444"
         )
 
+    # ── Branch selection ───────────────────────────────────────────────────
+
+    def _update_branch_btn_style(self):
+        is_main = self._selected_branch == _DEFAULT_BRANCH
+        bg     = "#1a2e1a" if is_main else "#2d1a00"
+        border = "#10b981" if is_main else "#f59e0b"
+        color  = "#10b981" if is_main else "#f59e0b"
+        self._btn_branch.setText(self._selected_branch)
+        self._btn_branch.setStyleSheet(f"""
+            QPushButton {{
+                background: {bg};
+                border: 2px solid {border};
+                border-radius: 10px;
+                color: {color};
+                font-size: 13pt;
+                font-weight: 700;
+            }}
+            QPushButton:pressed {{ background: {border}; color: white; }}
+        """)
+
+    def _select_branch(self):
+        dlg = BranchSelectDialog(self._selected_branch, parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            chosen = dlg.selected_branch()
+            if chosen != self._selected_branch:
+                self._selected_branch = chosen
+                self._prefs["branch"] = chosen
+                _save_prefs(self._prefs)
+                self._update_branch_btn_style()
+                self._set_status(
+                    f"Branch set to '{chosen}' — press ⟳ Update to apply.",
+                    "#f59e0b" if chosen != _DEFAULT_BRANCH else "#10b981"
+                )
+
+    # ── Update ────────────────────────────────────────────────────────────────
+
     def update_app(self):
         # On Windows run update.sh via Git Bash or WSL if available,
         # otherwise fall back to a simple git pull + pip via Python directly.
@@ -435,7 +658,10 @@ class LauncherWindow(QWidget):
         if not os.path.exists(script):
             self._set_status("update.sh not found.", "#ef4444")
             return
-        self._start_update_process("bash", [script])
+        # Pass the branch via environment so update.sh picks it up
+        env = os.environ.copy()
+        env["GIT_BRANCH"] = self._selected_branch
+        self._start_update_process("bash", [script], env=env)
 
     def _update_windows(self):
         """On Windows: git pull + pip install via Python — no bash needed."""
@@ -443,24 +669,32 @@ class LauncherWindow(QWidget):
         if not os.path.exists(python):
             python = sys.executable
         req = os.path.join(_REPO_DIR, "requirements.txt")
-        # Run as a small inline script so we get live output
+        branch = self._selected_branch
         cmd = (
             f"import subprocess, sys; "
-            f"subprocess.run(['git', 'pull', 'origin', 'main'], check=False); "
+            f"subprocess.run(['git', 'fetch', 'origin'], check=False); "
+            f"subprocess.run(['git', 'reset', '--hard', 'origin/{branch}'], check=False); "
             f"subprocess.run([sys.executable, '-m', 'pip', 'install', '-r', r'{req}', '-q'], check=False)"
         )
         self._start_update_process(python, ["-c", cmd])
 
-    def _start_update_process(self, program: str, args: list):
+    def _start_update_process(self, program: str, args: list, env: dict = None):
         self._log_panel.clear()
         self._log_panel.setVisible(True)
         # Hide main buttons while update runs so the log has full space
         self._btn_launch.setVisible(False)
         self._btn_update.setVisible(False)
+        self._btn_branch.setVisible(False)
         self._btn_reboot.setVisible(False)
         self._btn_shutdown.setVisible(False)
-        self._set_status("Updating… (close log to cancel)", "#0ea5e9")
+        self._set_status(f"Updating from branch '{self._selected_branch}'…", "#0ea5e9")
         self._process = QProcess(self)
+        if env is not None:
+            from qtpy.QtCore import QProcessEnvironment
+            qenv = QProcessEnvironment()
+            for k, v in env.items():
+                qenv.insert(k, v)
+            self._process.setProcessEnvironment(qenv)
         self._process.setProcessChannelMode(QProcess.MergedChannels)
         self._process.setWorkingDirectory(_REPO_DIR)
         self._process.readyRead.connect(self._update_log_ready)
@@ -518,6 +752,7 @@ class LauncherWindow(QWidget):
         self._btn_close_log.setVisible(False)
         self._btn_launch.setVisible(True)
         self._btn_update.setVisible(True)
+        self._btn_branch.setVisible(True)
         self._btn_reboot.setVisible(True)
         self._btn_shutdown.setVisible(True)
 
