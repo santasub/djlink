@@ -21,8 +21,8 @@ from qtpy.QtWidgets import (
     QPushButton, QLabel, QButtonGroup, QScrollArea,
     QFrame, QPlainTextEdit, QSizePolicy, QDialog
 )
-from qtpy.QtCore import Qt, QProcess, QTimer, QThread, Signal, QPoint, QEvent
-from qtpy.QtGui import QFont
+from qtpy.QtCore import Qt, QProcess, QTimer, QThread, Signal, QPoint, QEvent, QRect
+from qtpy.QtGui import QFont, QPainter, QColor, QPen, QBrush, QFontMetrics
 
 _REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 _PREFS_FILE = os.path.join(_REPO_DIR, ".launcher_prefs.json")
@@ -167,91 +167,178 @@ class _BranchFetcher(QThread):
             self.error.emit(str(exc))
 
 
-# ── Kinetic-scroll helper ───────────────────────────────────────────────────
+# ── Custom swipe-scrollable branch list ─────────────────────────────────────
 
-class _SwipeScrollArea(QScrollArea):
+class _BranchList(QWidget):
     """
-    QScrollArea with finger-swipe / kinetic scrolling.
-    No scrollbar visible — the user drags the content directly.
-    A small momentum effect is applied after release.
+    Custom widget that draws branch rows itself and handles swipe-scroll
+    natively — no child widgets, no event-stealing.
+
+    Signals
+    -------
+    selectionChanged(str)  emitted when the user taps a row
     """
-    # Pixels of movement before we treat it as a scroll (not a tap)
-    _DRAG_THRESHOLD = 8
+    selectionChanged = Signal(str)
+
+    _ROW_H      = 66    # px per row
+    _SPACING    = 8     # px between rows
+    _DRAG_THRES = 10    # px before a press becomes a scroll
+    _FRICTION   = 0.80  # momentum decay per 16 ms tick
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self.setMinimumHeight(200)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setCursor(Qt.PointingHandCursor)
 
-        self._drag_active  = False
-        self._drag_start_y = 0          # finger start position (viewport coords)
-        self._scroll_start = 0          # scrollbar value at drag start
-        self._last_y       = 0
-        self._velocity     = 0.0        # px/tick for momentum
-        self._is_scrolling = False      # True once threshold is crossed
+        self._branches: list[str] = []
+        self._selected: str = ""
+        self._loading:  bool = True
+        self._error:    str  = ""
 
-        # Kinetic momentum timer (fires every 16 ms ≈ 60 fps)
-        self._momentum_timer = QTimer(self)
-        self._momentum_timer.setInterval(16)
-        self._momentum_timer.timeout.connect(self._momentum_tick)
+        # scroll state
+        self._offset    = 0      # current scroll offset in px (top of visible area)
+        self._press_y   = 0
+        self._press_off = 0
+        self._last_y    = 0
+        self._velocity  = 0.0
+        self._dragging  = False
+        self._scrolled  = False  # True once drag crossed threshold
 
-        # Allow the viewport to receive mouse / touch events
-        self.viewport().installEventFilter(self)
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._momentum_tick)
 
-    def eventFilter(self, obj, event):
-        if obj is self.viewport():
-            t = event.type()
-            if t == QEvent.MouseButtonPress:
-                self._on_press(event)
-            elif t == QEvent.MouseMove:
-                self._on_move(event)
-            elif t == QEvent.MouseButtonRelease:
-                self._on_release(event)
-        return super().eventFilter(obj, event)
+    # ── public API ────────────────────────────────────────────────────────
 
-    # ——— touch / mouse handlers ————————————————————————————————————
+    def set_branches(self, branches: list, selected: str):
+        self._branches = branches
+        self._selected = selected
+        self._loading  = False
+        self._error    = ""
+        self._offset   = 0
+        self.update()
 
-    def _on_press(self, event):
-        self._momentum_timer.stop()
-        self._drag_active  = True
-        self._is_scrolling = False
-        self._drag_start_y = event.pos().y()
-        self._last_y       = self._drag_start_y
-        self._scroll_start = self.verticalScrollBar().value()
-        self._velocity     = 0.0
+    def set_error(self, msg: str):
+        self._error   = msg
+        self._loading = False
+        self.update()
 
-    def _on_move(self, event):
-        if not self._drag_active:
+    def selected(self) -> str:
+        return self._selected
+
+    # ── geometry helpers ──────────────────────────────────────────────────
+
+    def _total_h(self) -> int:
+        n = len(self._branches)
+        return n * self._ROW_H + max(0, n - 1) * self._SPACING if n else 0
+
+    def _max_offset(self) -> int:
+        return max(0, self._total_h() - self.height())
+
+    def _row_rect(self, i: int) -> QRect:
+        y = i * (self._ROW_H + self._SPACING) - self._offset
+        return QRect(0, y, self.width(), self._ROW_H)
+
+    def _row_at(self, y_local: int) -> int:
+        """Return row index under y (in widget coords), or -1."""
+        for i in range(len(self._branches)):
+            if self._row_rect(i).contains(0, y_local):
+                return i
+        return -1
+
+    # ── painting ──────────────────────────────────────────────────────────
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor("#111827"))
+
+        if self._loading:
+            p.setPen(QColor("#9ca3af"))
+            f = p.font(); f.setPointSize(13); p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter, "Fetching branches from GitHub…")
             return
-        dy = event.pos().y() - self._drag_start_y
-        if not self._is_scrolling and abs(dy) < self._DRAG_THRESHOLD:
-            return                          # still within tap tolerance
-        self._is_scrolling = True
-        # velocity: difference from last position (for momentum)
-        self._velocity = event.pos().y() - self._last_y
-        self._last_y   = event.pos().y()
-        self.verticalScrollBar().setValue(self._scroll_start - dy)
 
-    def _on_release(self, event):
-        if not self._drag_active:
+        if self._error:
+            p.setPen(QColor("#ef4444"))
+            f = p.font(); f.setPointSize(11); p.setFont(f)
+            p.drawText(self.rect(), Qt.AlignCenter | Qt.TextWordWrap,
+                       f"Could not fetch branches:\n{self._error}")
             return
-        self._drag_active = False
-        if self._is_scrolling and abs(self._velocity) > 2:
-            self._momentum_timer.start()
+
+        f = p.font(); f.setPointSize(13); f.setBold(True); p.setFont(f)
+        fm = QFontMetrics(f)
+
+        for i, name in enumerate(self._branches):
+            r = self._row_rect(i)
+            if r.bottom() < 0 or r.top() > self.height():
+                continue   # outside visible area
+
+            selected = (name == self._selected)
+            bg     = QColor("#0c4a6e") if selected else QColor("#1f2937")
+            border = QColor("#0ea5e9") if selected else QColor("#374151")
+            fg     = QColor("#7dd3fc") if selected else QColor("#e5e7eb")
+
+            # background
+            p.setBrush(QBrush(bg))
+            p.setPen(QPen(border, 2))
+            p.drawRoundedRect(r.adjusted(2, 2, -2, -2), 8, 8)
+
+            # label
+            p.setPen(fg)
+            text_r = r.adjusted(18, 0, -18, 0)
+            p.drawText(text_r, Qt.AlignVCenter | Qt.AlignLeft,
+                       fm.elidedText(name, Qt.ElideRight, text_r.width()))
+
+        p.end()
+
+    # ── input ─────────────────────────────────────────────────────────────
+
+    def mousePressEvent(self, event):
+        self._timer.stop()
+        self._press_y   = event.pos().y()
+        self._last_y    = self._press_y
+        self._press_off = self._offset
+        self._dragging  = True
+        self._scrolled  = False
+        self._velocity  = 0.0
+
+    def mouseMoveEvent(self, event):
+        if not self._dragging:
+            return
+        dy = event.pos().y() - self._press_y
+        if not self._scrolled and abs(dy) < self._DRAG_THRES:
+            return
+        self._scrolled  = True
+        self._velocity  = event.pos().y() - self._last_y
+        self._last_y    = event.pos().y()
+        self._offset    = max(0, min(self._max_offset(), self._press_off - dy))
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if not self._dragging:
+            return
+        self._dragging = False
+        if self._scrolled:
+            if abs(self._velocity) > 1.5:
+                self._timer.start()
+        else:
+            # it was a tap — find which row
+            row = self._row_at(event.pos().y())
+            if row >= 0:
+                self._selected = self._branches[row]
+                self.selectionChanged.emit(self._selected)
+                self.update()
 
     def _momentum_tick(self):
-        """Gradually decelerate after finger lift."""
-        self._velocity *= 0.82            # friction factor
+        self._velocity *= self._FRICTION
         if abs(self._velocity) < 0.5:
-            self._momentum_timer.stop()
+            self._timer.stop()
             return
-        bar = self.verticalScrollBar()
-        bar.setValue(bar.value() - int(self._velocity))
-
-    def is_scrolling(self) -> bool:
-        """True while a swipe is in progress — lets buttons suppress their click."""
-        return self._is_scrolling
+        self._offset = max(0, min(self._max_offset(),
+                                  self._offset - int(self._velocity)))
+        self.update()
 
 
 # ── Branch selector dialog ────────────────────────────────────────────────────
@@ -262,7 +349,6 @@ class BranchSelectDialog(QDialog):
     def __init__(self, current_branch: str, parent=None):
         super().__init__(parent)
         self._selected = current_branch
-        self._scroll   = None           # set after build — used by branch buttons
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setFixedSize(700, 460)
         self.setStyleSheet("""
@@ -283,28 +369,15 @@ class BranchSelectDialog(QDialog):
         lbl_title.setStyleSheet("color:#7dd3fc;font-size:18pt;font-weight:bold;")
         root.addWidget(lbl_title)
 
-        lbl_sub = QLabel("Swipe to scroll  •  Changes take effect on next  ⟳ Update")
+        lbl_sub = QLabel("Tap to select  •  Swipe to scroll  •  active on next  ⟳ Update")
         lbl_sub.setAlignment(Qt.AlignCenter)
         lbl_sub.setStyleSheet("color:#6b7280;font-size:10pt;")
         root.addWidget(lbl_sub)
 
-        # Swipeable branch list
-        self._scroll = _SwipeScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._list_widget = QWidget()
-        self._list_widget.setStyleSheet("background: transparent;")
-        self._list_layout = QVBoxLayout(self._list_widget)
-        self._list_layout.setSpacing(8)
-        self._list_layout.setContentsMargins(4, 4, 4, 4)
-        self._scroll.setWidget(self._list_widget)
-        root.addWidget(self._scroll, 1)
-
-        # Loading indicator
-        self._lbl_loading = QLabel("Fetching branches from GitHub…")
-        self._lbl_loading.setAlignment(Qt.AlignCenter)
-        self._lbl_loading.setStyleSheet("color:#9ca3af;font-size:12pt;")
-        self._list_layout.addWidget(self._lbl_loading)
-        self._list_layout.addStretch()
+        # Custom swipe list
+        self._list = _BranchList()
+        self._list.selectionChanged.connect(self._pick)
+        root.addWidget(self._list, 1)
 
         # Bottom row
         btn_row = QHBoxLayout()
@@ -332,9 +405,6 @@ class BranchSelectDialog(QDialog):
 
         root.addLayout(btn_row)
 
-        self._branch_group = QButtonGroup(self)
-        self._branch_group.setExclusive(True)
-
         # Start background fetch
         self._fetcher = _BranchFetcher(self)
         self._fetcher.finished.connect(self._on_branches)
@@ -345,52 +415,10 @@ class BranchSelectDialog(QDialog):
         return self._selected
 
     def _on_branches(self, branches: list):
-        # Remove loading label + trailing stretch
-        self._lbl_loading.deleteLater()
-        item = self._list_layout.takeAt(self._list_layout.count() - 1)
-        if item:
-            del item
-
-        for name in branches:
-            btn = QPushButton(name)
-            btn.setCheckable(True)
-            btn.setMinimumHeight(62)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: #111827;
-                    border: 2px solid #374151;
-                    border-radius: 8px;
-                    color: #e5e7eb;
-                    font-size: 13pt;
-                    font-weight: 600;
-                    text-align: left;
-                    padding: 0 16px;
-                }
-                QPushButton:checked {
-                    background: #0c4a6e;
-                    border: 2px solid #0ea5e9;
-                    color: #7dd3fc;
-                    font-weight: 700;
-                }
-            """)
-            # Only register click when the finger didn't scroll
-            def _on_click(checked, n=name, b=btn):
-                if self._scroll and self._scroll.is_scrolling():
-                    b.setChecked(n == self._selected)   # revert visual state
-                    return
-                self._pick(n)
-            btn.clicked.connect(_on_click)
-            self._branch_group.addButton(btn)
-            self._list_layout.addWidget(btn)
-            if name == self._selected:
-                btn.setChecked(True)
-
-        self._list_layout.addStretch()
+        self._list.set_branches(branches, self._selected)
 
     def _on_error(self, msg: str):
-        self._lbl_loading.setText(f"Could not fetch branches:\n{msg}")
-        self._lbl_loading.setStyleSheet("color:#ef4444;font-size:11pt;")
+        self._list.set_error(msg)
 
     def _pick(self, name: str):
         self._selected = name
