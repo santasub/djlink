@@ -6,8 +6,8 @@ from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButt
                              QComboBox, QGridLayout, QFrame, QSizePolicy, QDialog,
                              QGroupBox, QRadioButton, QDialogButtonBox, QSlider,
                              QMessageBox, QDoubleSpinBox, QScrollArea)
-from qtpy.QtCore import Qt, Signal, QTimer
-from qtpy.QtGui import QColor, QPainter, QPixmap
+from qtpy.QtCore import Qt, Signal, QTimer, QEvent, QRect, QPoint
+from qtpy.QtGui import QColor, QPainter, QPixmap, QPen, QBrush, QFont, QFontMetrics
 
 # MIDI Clock imports
 from prodj.midi.midiclock_rtmidi import MidiClock as RtMidiClock, list_ports as rtmidi_list_ports
@@ -20,6 +20,134 @@ if sys.platform.startswith('linux'):
             "AlsaMidiClock not available (alsaseq missing). Falling back to rtmidi."
         )
         AlsaMidiClock = None
+
+# ── Touch BPM slider ─────────────────────────────────────────────────────────
+
+class _TouchBpmSlider(QWidget):
+    """Custom horizontal BPM slider designed for finger use on small touchscreens.
+
+    - No tiny handle to grab: drag anywhere on the widget to scrub
+    - Emits valueChanged(int) on every move and sliderReleased() on lift
+    - Range: 300..2000  (= 30.0..200.0 BPM ×10)
+    - Large hit area, amber fill, value displayed inside the groove
+    """
+    valueChanged  = Signal(int)
+    sliderReleased = Signal()
+
+    _BPM_MIN = 300
+    _BPM_MAX = 2000
+    _DRAG_THRESHOLD = 4   # px before motion is treated as a drag
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = 1200          # default 120.0 BPM
+        self._dragging = False
+        self._drag_start_x = 0
+        self._drag_start_val = 0
+        self.setMinimumHeight(56)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setCursor(Qt.PointingHandCursor)
+        self._enabled = True
+
+    # ── public API (matches QSlider interface used by existing code) ─────
+
+    def value(self) -> int:
+        return self._value
+
+    def setValue(self, v: int):
+        v = max(self._BPM_MIN, min(self._BPM_MAX, int(v)))
+        if v != self._value:
+            self._value = v
+            self.valueChanged.emit(v)
+            self.update()
+
+    def setRange(self, lo: int, hi: int):
+        self._BPM_MIN = lo
+        self._BPM_MAX = hi
+
+    def setEnabled(self, enabled: bool):
+        self._enabled = enabled
+        self.update()
+
+    def isEnabled(self) -> bool:
+        return self._enabled
+
+    # ── painting ─────────────────────────────────────────────────────
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        W, H = self.width(), self.height()
+        groove_h = 14
+        gy = (H - groove_h) // 2
+        r = groove_h // 2
+
+        fill_color  = QColor("#f59e0b") if self._enabled else QColor("#374151")
+        track_color = QColor("#374151")
+        text_color  = QColor("#1a1a1a") if self._enabled else QColor("#6b7280")
+
+        span = self._BPM_MAX - self._BPM_MIN
+        frac = (self._value - self._BPM_MIN) / span if span else 0.0
+        fill_w = max(r * 2, int(frac * W))
+
+        # Track background
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(track_color))
+        p.drawRoundedRect(0, gy, W, groove_h, r, r)
+
+        # Fill
+        p.setBrush(QBrush(fill_color))
+        p.drawRoundedRect(0, gy, fill_w, groove_h, r, r)
+
+        # Value label inside groove
+        bpm_str = f"{self._value / 10.0:.1f}"
+        f = QFont()
+        f.setPointSize(9)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(text_color)
+        p.drawText(QRect(0, gy, W, groove_h), Qt.AlignCenter, f"{bpm_str} BPM")
+
+        # Handle indicator — vertical bar at fill end
+        hx = fill_w - 2
+        handle_h = H - 4
+        hy = (H - handle_h) // 2
+        p.setPen(QPen(QColor("#d97706") if self._enabled else QColor("#4b5563"), 3))
+        p.drawLine(hx, hy, hx, hy + handle_h)
+
+        p.end()
+
+    # ── input ─────────────────────────────────────────────────────────────
+
+    def _x_to_value(self, x: int) -> int:
+        span = self._BPM_MAX - self._BPM_MIN
+        frac = max(0.0, min(1.0, x / max(1, self.width())))
+        return self._BPM_MIN + int(frac * span)
+
+    def mousePressEvent(self, event):
+        if not self._enabled:
+            return
+        self._drag_start_x   = event.pos().x()
+        self._drag_start_val = self._value
+        self._dragging = True
+        # Jump to touched position immediately
+        new_val = self._x_to_value(event.pos().x())
+        self.setValue(new_val)
+
+    def mouseMoveEvent(self, event):
+        if not self._enabled or not self._dragging:
+            return
+        new_val = self._x_to_value(event.pos().x())
+        self.setValue(new_val)
+
+    def mouseReleaseEvent(self, event):
+        if not self._enabled:
+            return
+        self._dragging = False
+        new_val = self._x_to_value(event.pos().x())
+        self.setValue(new_val)
+        self.sliderReleased.emit()
+
 
 MAX_TAPS_FOR_AVG = 4
 TAP_TIMEOUT_SECONDS = 2.0
@@ -1304,30 +1432,10 @@ class MidiClockMainWindow(QWidget):
         self.manual_bpm_label.setEnabled(False)
         manual_layout.addWidget(self.manual_bpm_label)
 
-        # Slider — tall groove and handle so it is easy to grab on a touchscreen
-        self.manual_bpm_slider = QSlider(Qt.Horizontal)
+        # Custom touch slider — full-width drag anywhere, no tiny handle
+        self.manual_bpm_slider = _TouchBpmSlider()
         self.manual_bpm_slider.setRange(300, 2000)  # 30.0 – 200.0 BPM
         self.manual_bpm_slider.setValue(1200)
-        self.manual_bpm_slider.setMinimumHeight(56)
-        self.manual_bpm_slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                height: 14px;
-                background: #374151;
-                border-radius: 7px;
-            }
-            QSlider::handle:horizontal {
-                width: 48px;
-                height: 48px;
-                margin: -17px 0;
-                background: #f59e0b;
-                border-radius: 24px;
-                border: 3px solid #d97706;
-            }
-            QSlider::sub-page:horizontal {
-                background: #d97706;
-                border-radius: 7px;
-            }
-        """)
         self.manual_bpm_slider.valueChanged.connect(self._manual_bpm_label_update)
         self.manual_bpm_slider.sliderReleased.connect(self.manual_bpm_slider_changed)
         self.manual_bpm_slider.setEnabled(False)
@@ -2086,10 +2194,21 @@ class MidiClockMainWindow(QWidget):
             # No beat fired yet — use snap approach for first beat
             self._beat_snap_pending = True
 
+        # ── ALSA queue-latency compensation ──────────────────────────────
+        # The ALSA backend pre-queues `enqueue_at_once` ticks (default 24 = 1 beat).
+        # last_beat_wall_time is stamped when the beat CALLBACK fires, which is when
+        # the tick is *enqueued*, not when it actually leaves the hardware MIDI port.
+        # We must subtract the queue lookahead so our phase reference matches reality.
+        alsa_latency_ms = 0.0
+        if hasattr(self.midi_clock_instance, 'queue_latency_ms'):
+            alsa_latency_ms = self.midi_clock_instance.queue_latency_ms
+
         if self._beat_snap_pending:
             self._beat_snap_pending = False
             if t_last_midi is not None:
-                t_next_midi = t_last_midi + beat_period_ms / 1000.0
+                # Compensate: the actual output happened alsa_latency_ms ago
+                t_last_real = t_last_midi - alsa_latency_ms / 1000.0
+                t_next_midi = t_last_real + beat_period_ms / 1000.0
                 snap_ms = (t_next_cdj - t_next_midi) * 1000.0 + self._grid_offset_ms
                 # Wrap to ±half period
                 while snap_ms > beat_period_ms / 2:
@@ -2097,8 +2216,8 @@ class MidiClockMainWindow(QWidget):
                 while snap_ms < -beat_period_ms / 2:
                     snap_ms += beat_period_ms
                 self.midi_clock_instance.adjust_phase(snap_ms)
-                logging.info("Beat grid snap: %.1f ms (offset %.1f ms)",
-                             snap_ms, self._grid_offset_ms)
+                logging.info("Beat grid snap: %.1f ms (ALSA latency %.1f ms, offset %.1f ms)",
+                             snap_ms, alsa_latency_ms, self._grid_offset_ms)
             return
 
         if not self.auto_phase_correction_enabled:
@@ -2107,8 +2226,10 @@ class MidiClockMainWindow(QWidget):
         if t_last_midi is None:
             return
 
-        # Our next MIDI beat is one beat_period after the last one
-        t_next_midi = t_last_midi + beat_period_ms / 1000.0
+        # Our next MIDI beat is one beat_period after the last one,
+        # corrected for ALSA queue pre-buffering latency.
+        t_last_real = t_last_midi - alsa_latency_ms / 1000.0
+        t_next_midi = t_last_real + beat_period_ms / 1000.0
 
         # Positive error: our beat comes AFTER CDJ beat → we are behind → correct earlier
         # Negative error: our beat comes BEFORE CDJ beat → we are ahead  → correct later
@@ -2270,12 +2391,17 @@ class MidiClockMainWindow(QWidget):
 
     @staticmethod
     def _bpm_from_client(client) -> Optional[float]:
-        """Extract effective BPM (bpm × actual_pitch) from a client object.
+        """Extract effective BPM (bpm x actual_pitch) from a client object.
         Returns None if data is missing or invalid.
+        actual_pitch of 0.0 means 'not yet received' on Pioneer gear — treat as 1.0.
         """
         try:
             bpm = float(client.bpm)
             pitch = float(client.actual_pitch)
+            # Pioneer CDJs send actual_pitch=0.0 before the first status packet
+            # that carries pitch info.  Treat 0.0 as 1.0 (no pitch offset).
+            if pitch == 0.0:
+                pitch = 1.0
             if bpm > 0:
                 return bpm * pitch
         except (TypeError, ValueError):
