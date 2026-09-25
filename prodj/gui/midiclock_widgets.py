@@ -659,13 +659,16 @@ class MidiClockMainWindow(QWidget):
         self.tap_timestamps = []
         self.last_prodj_beat_time = None
 
-        # Auto phase correction state
+                # Auto phase correction state
         self.auto_phase_correction_enabled = True
-        self.phase_error_ms = 0.0          # last measured phase error in ms
-        self.phase_correction_strength = 0.8  # 0.0-1.0, how aggressively we correct per beat
+        self.phase_error_ms = 0.0
         self.phase_error_history = []      # rolling history for smoothing
         self.PHASE_HISTORY_LEN = 4
-        self._grid_offset_ms = 0.0         # persistent manual offset, survives auto-sync corrections
+        self._grid_offset_ms = 0.0         # persistent manual offset
+        # Slip mode / pitch change detection
+        self._slip_mode_active = False
+        self._bpm_stable_count = 0         # beats with stable BPM after large change
+        self._resync_pending = False        # Auto-Stop+Re-Sync nach grossem Tempowechsel
 
         self.midi_clock_instance = None  # AlsaMidiClock or RtMidiClock
         self.preferred_midi_backend = None  # "ALSA" or "rtmidi"
@@ -1165,15 +1168,19 @@ class MidiClockMainWindow(QWidget):
         if (self._last_applied_bpm is not None
                 and abs(bpm - self._last_applied_bpm) < self._BPM_CHANGE_THRESHOLD):
             return
-        # Large BPM change (>2 BPM) → force a grid re-snap on next beat packet
-        # so the phase-correction loop re-anchors to the new tempo.
+                # Grosser Tempowechsel (>2 BPM) und Clock laeuft: Auto-Stop + Re-Sync
         if (self._last_applied_bpm is not None
-                and abs(bpm - self._last_applied_bpm) > 2.0):
-            self._beat_snap_pending = True
-            self.phase_error_history.clear()
-            self._sparkline.clear()
-            logging.info("_apply_bpm: large tempo change %.2f→%.2f, forcing re-snap",
+                and abs(bpm - self._last_applied_bpm) > 2.0
+                and self._output_state == 'running'
+                and not self._slip_mode_active):
+            logging.info("_apply_bpm: large tempo change %.2f->%.2f, auto-stop+resync",
                          self._last_applied_bpm, bpm)
+            self._bpm_stable_count = 0
+            self._resync_pending = True
+            self._last_applied_bpm = bpm
+            self.midi_clock_instance.setBpm(bpm)
+            QTimer.singleShot(0, self._do_auto_resync)
+            return
         self._last_applied_bpm = bpm
         logging.info("setBpm BPM=%.2f", bpm)
         self.midi_clock_instance.setBpm(bpm)
@@ -1734,6 +1741,18 @@ class MidiClockMainWindow(QWidget):
         self._update_active_source_label()
         self._refresh_metrics()
         self._refresh_track_info()
+        # Slip Mode vom aktiven CDJ lesen
+        src = self._get_active_source_player_number()
+        if src is not None:
+            client = self.prodj.cl.getClient(src)
+            if client is not None:
+                slip = getattr(client, 'slip_mode', False)
+                if slip != self._slip_mode_active:
+                    self._slip_mode_active = slip
+                    if slip:
+                        logging.info("Slip Mode ON - BPM changes ignored")
+                    else:
+                        logging.info("Slip Mode OFF - resuming normal sync")
 
     def update_player_display(self) -> None:
         """Rebuild the player tile strip.  Tiles are created once per player
@@ -2226,11 +2245,37 @@ class MidiClockMainWindow(QWidget):
                 else:
                     self._countdown_label.setText(str(remaining))
 
+    def _do_auto_resync(self):
+        """Auto-Stop + Re-Sync nach grossem Tempowechsel laut Design-Doc.
+        Stoppt MIDI Output, wartet auf stabiles BPM, startet neu auf Bar Beat 1.
+        """
+        if self._output_state != 'running':
+            return
+        logging.info("Auto-Resync: stopping output, waiting for bar beat 1")
+        if self.midi_clock_instance and self.midi_clock_instance.is_alive():
+            if hasattr(self.midi_clock_instance, 'send_stop'):
+                self.midi_clock_instance.send_stop()
+        self._output_state = 'waiting'
+        self._sync_start_pending = True
+        self._sync_beats_seen = 0
+        beats_left = self._beats_until_bar_one()
+        self._sync_start_countdown = beats_left
+        self._countdown_label.setText(str(beats_left))
+        self._sync_status_label.setText("Tempo change!\nRe-syncing to bar beat 1...")
+        self._sync_status_label.setStyleSheet("color:#f59e0b;font-size:9pt;font-weight:bold;")
+        self.phase_error_history.clear()
+        self._sparkline.clear()
+        self._beat_snap_pending = True
+        self._resync_pending = False
+        self.update_global_status_label()
+
     def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
-        # Auto Sync = nur BPM vom CDJ folgen.
-        # KEINE Phase-Korrekturen waehrend des Betriebs.
-        # Synthesizer/Drummaschinen brauchen stabilen Clock ohne Spruenge.
-        # Phase wird einmalig beim Start gesetzt, danach laeuft Clock konstant.
+        """Laut Design-Doc:
+        - Slip Mode: BPM-Aenderungen ignorieren, Clock laeuft weiter
+        - Einmaliger Snap beim Start via SETPOS_TIME
+        - Danach: sanfte SKEW-Korrekturen max +-2ms pro Beat
+        - CDJ Beat-Paket Ankunftszeit = echter Beat-Anker
+        """
         if self.manual_bpm_mode_active:
             return
         if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
@@ -2257,18 +2302,38 @@ class MidiClockMainWindow(QWidget):
                 logging.info("Beat grid snap: %.1f ms", snap_ms)
             return
 
-        # Phasenfehler nur messen und anzeigen -- KEIN adjust_phase
+        if not self.auto_phase_correction_enabled:
+            return
+
+        # Slip Mode: keine Korrektur
+        if self._slip_mode_active:
+            return
+
+        # Phasenfehler messen (CDJ Beat-Ankunftszeit = echter Beat)
         t_cdj_beat = time.time()
         t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
         if t_last_midi is None:
             return
+
         error_ms = (t_cdj_beat - t_last_midi) * 1000.0 % beat_period_ms
         if error_ms > beat_period_ms / 2:
             error_ms -= beat_period_ms
         self.phase_error_ms = error_ms - self._grid_offset_ms
+
+        # Sanfte SKEW-Korrektur: max +-2ms pro Beat
+        # Kein SETPOS_TIME hier -- nur gradueller Nudge
+        MAX_SKEW_MS = 2.0
+        correction_ms = max(-MAX_SKEW_MS, min(MAX_SKEW_MS, -self.phase_error_ms))
+        if abs(self.phase_error_ms) > 0.5:  # Toleranzband 0.5ms
+            if hasattr(self.midi_clock_instance, 'adjust_phase'):
+                # Nur SKEW verwenden (adjust_phase <= 20ms nutzt SKEW)
+                self.midi_clock_instance.adjust_phase(correction_ms)
+
         self._sparkline.append(round(self.phase_error_ms, 1))
         if len(self._sparkline) > _SPARKLINE_LEN:
             self._sparkline.pop(0)
+
+        logging.debug("Phase: err=%.1f ms corr=%.1f ms", self.phase_error_ms, correction_ms)
         self._update_phase_error_display()
     def _get_active_source_player_number(self):
         """Returns the player number of the current BPM/phase source, or None."""
