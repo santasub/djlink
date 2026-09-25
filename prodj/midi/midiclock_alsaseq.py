@@ -100,6 +100,34 @@ class MidiClock(Thread):
   def set_beat_callback(self, callback):
       self.beat_callback = callback
 
+  def _queue_time_ns(self) -> int:
+    """Return the current ALSA sequencer queue time in nanoseconds.
+    This is the time of the *last event the hardware has processed*,
+    i.e. the real hardware output clock — not a software estimate.
+    Returns 0 if the queue has not started yet."""
+    try:
+      status, time_t, events = alsaseq.status()
+      # time_t is a (seconds, nanoseconds) tuple from the queue
+      return time_t[0] * 1_000_000_000 + time_t[1]
+    except Exception:
+      return 0
+
+  def next_beat_wall_time(self) -> float:
+    """Return the wall-clock time of the next MIDI beat output.
+
+    Uses the ALSA queue clock (hardware-anchored) to compute when
+    time_s/time_ns (= next enqueue position) will actually be played.
+    This gives a precise prediction regardless of Python scheduling jitter.
+    """
+    with self._bpm_lock:
+      next_ns = self.time_s * 1_000_000_000 + self.time_ns
+    queue_ns = self._queue_time_ns()
+    if queue_ns == 0:
+      return time.time()
+    # remaining ns until next scheduled beat in queue-time
+    remaining_ns = next_ns - queue_ns
+    return time.time() + remaining_ns / 1e9
+
   def enqueue_events(self):
     fire_beat = False
     for i in range(self.enqueue_at_once):

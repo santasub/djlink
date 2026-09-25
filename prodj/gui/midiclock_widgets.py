@@ -1025,6 +1025,64 @@ class MidiClockMainWindow(QWidget):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Phase / timing helpers
+    # ------------------------------------------------------------------
+
+    def _next_beat_wall_time(self, clk, beat_period_ms: float) -> float:
+        """Return wall-clock time of the next MIDI beat from the clock instance.
+
+        Prefers next_beat_wall_time() (ALSA queue-anchored, precise).
+        Falls back to last_beat_wall_time + beat_period (software estimate).
+        """
+        if hasattr(clk, 'next_beat_wall_time'):
+            try:
+                t = clk.next_beat_wall_time()
+                if t > time.time() - beat_period_ms / 1000.0:
+                    return t
+            except Exception:
+                pass
+        # Fallback: last known beat + one period
+        t_last = getattr(clk, 'last_beat_wall_time', None)
+        if t_last is not None:
+            return t_last + beat_period_ms / 1000.0
+        return time.time() + beat_period_ms / 1000.0
+
+    def _compute_snap_ms(self, clk, t_next_cdj: float = None,
+                         beat_period_ms: float = None,
+                         offset_ms: float = 0.0) -> Optional[float]:
+        """Compute the phase nudge (ms) to align our next MIDI beat with t_next_cdj.
+
+        For the send_start snap (t_next_cdj=None): snap so next beat = now.
+        For the grid snap: snap so next beat = t_next_cdj + offset.
+        Returns None if no timing reference is available.
+        """
+        if beat_period_ms is None:
+            beat_period_ms = clk.delay * 24.0 * 1000.0
+        if beat_period_ms <= 0:
+            return None
+
+        t_next_midi = self._next_beat_wall_time(clk, beat_period_ms)
+        now = time.time()
+
+        if t_next_cdj is None:
+            # send_start mode: snap so next MIDI beat fires right NOW
+            remaining_ms = (t_next_midi - now) * 1000.0
+            # Wrap into (-beat_period/2, +beat_period/2]
+            while remaining_ms > beat_period_ms / 2:
+                remaining_ms -= beat_period_ms
+            while remaining_ms < -beat_period_ms / 2:
+                remaining_ms += beat_period_ms
+            return -remaining_ms  # nudge earlier by this amount
+        else:
+            # grid snap: align to CDJ next beat
+            snap_ms = (t_next_cdj - t_next_midi) * 1000.0 + offset_ms
+            while snap_ms > beat_period_ms / 2:
+                snap_ms -= beat_period_ms
+            while snap_ms < -beat_period_ms / 2:
+                snap_ms += beat_period_ms
+            return snap_ms
+
     def nudge(self, ms: float) -> None:
         """Apply a one-shot phase nudge of *ms* milliseconds to the running clock.
         Positive = later, negative = earlier.  No-op when clock is stopped.
@@ -2142,25 +2200,12 @@ class MidiClockMainWindow(QWidget):
                     # is scheduled exactly on our next beat tick.
                     clk = self.midi_clock_instance
                     if clk and clk.is_alive():
-                        beat_period_ms = clk.delay * 24.0 * 1000.0
-                        if beat_period_ms > 0:
-                            t_last = getattr(clk, 'last_beat_wall_time', None)
-                            if t_last is not None:
-                                # Compensate for ALSA queue pre-buffer latency:
-                                # last_beat_wall_time is stamped at enqueue time,
-                                # not at hardware output. Subtract the lookahead.
-                                alsa_lat_ms = getattr(clk, 'queue_latency_ms', 0.0)
-                                t_last_real = t_last - alsa_lat_ms / 1000.0
-                                # How far into the current beat period are we?
-                                elapsed_ms = (time.time() - t_last_real) * 1000.0
-                                phase_ms = elapsed_ms % beat_period_ms
-                                # Nudge earlier so the *next* MIDI beat lands NOW
-                                snap_ms = -(phase_ms)
-                                clk.adjust_phase(snap_ms)
-                                logging.info(
-                                    "Sync snap: %.1f ms (ALSA lat %.1f ms) before send_start",
-                                    snap_ms, alsa_lat_ms
-                                )
+                        # Use next_beat_wall_time() if available (ALSA queue-anchored),
+                        # otherwise fall back to last_beat_wall_time + period estimate.
+                        snap_ms = self._compute_snap_ms(clk)
+                        if snap_ms is not None:
+                            clk.adjust_phase(snap_ms)
+                            logging.info("Sync snap: %.1f ms before send_start", snap_ms)
 
                     self._countdown_label.setText("►")
                     self._sync_status_label.setText("Running — in sync!")
@@ -2214,51 +2259,39 @@ class MidiClockMainWindow(QWidget):
         t_recv = time.time()
         t_next_cdj = t_recv + next_beat_ms / 1000.0
 
+        # Check if we have any timing reference yet
         t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
-        if t_last_midi is None:
-            # No beat fired yet — use snap approach for first beat
+        has_next_beat = hasattr(self.midi_clock_instance, 'next_beat_wall_time')
+        if t_last_midi is None and not has_next_beat:
             self._beat_snap_pending = True
-
-        # ── ALSA queue-latency compensation ──────────────────────────────
-        # The ALSA backend pre-queues `enqueue_at_once` ticks (default 24 = 1 beat).
-        # last_beat_wall_time is stamped when the beat CALLBACK fires, which is when
-        # the tick is *enqueued*, not when it actually leaves the hardware MIDI port.
-        # We must subtract the queue lookahead so our phase reference matches reality.
-        alsa_latency_ms = 0.0
-        if hasattr(self.midi_clock_instance, 'queue_latency_ms'):
-            alsa_latency_ms = self.midi_clock_instance.queue_latency_ms
 
         if self._beat_snap_pending:
             self._beat_snap_pending = False
-            if t_last_midi is not None:
-                # Compensate: the actual output happened alsa_latency_ms ago
-                t_last_real = t_last_midi - alsa_latency_ms / 1000.0
-                t_next_midi = t_last_real + beat_period_ms / 1000.0
-                snap_ms = (t_next_cdj - t_next_midi) * 1000.0 + self._grid_offset_ms
-                # Wrap to ±half period
-                while snap_ms > beat_period_ms / 2:
-                    snap_ms -= beat_period_ms
-                while snap_ms < -beat_period_ms / 2:
-                    snap_ms += beat_period_ms
+            snap_ms = self._compute_snap_ms(
+                self.midi_clock_instance,
+                t_next_cdj=t_next_cdj,
+                beat_period_ms=beat_period_ms,
+                offset_ms=self._grid_offset_ms
+            )
+            if snap_ms is not None:
                 self.midi_clock_instance.adjust_phase(snap_ms)
-                logging.info("Beat grid snap: %.1f ms (ALSA latency %.1f ms, offset %.1f ms)",
-                             snap_ms, alsa_latency_ms, self._grid_offset_ms)
+                logging.info("Beat grid snap: %.1f ms (offset %.1f ms)",
+                             snap_ms, self._grid_offset_ms)
             return
 
         if not self.auto_phase_correction_enabled:
             return
 
-        if t_last_midi is None:
+        if t_last_midi is None and not has_next_beat:
             return
 
-        # Our next MIDI beat is one beat_period after the last one,
-        # corrected for ALSA queue pre-buffering latency.
-        t_last_real = t_last_midi - alsa_latency_ms / 1000.0
-        t_next_midi = t_last_real + beat_period_ms / 1000.0
+        # Use next_beat_wall_time() for ALSA (queue-anchored), else estimate.
+        t_next_midi_wall = self._next_beat_wall_time(self.midi_clock_instance,
+                                                      beat_period_ms)
 
         # Positive error: our beat comes AFTER CDJ beat → we are behind → correct earlier
         # Negative error: our beat comes BEFORE CDJ beat → we are ahead  → correct later
-        raw_error_ms = (t_next_midi - t_next_cdj) * 1000.0
+        raw_error_ms = (t_next_midi_wall - t_next_cdj) * 1000.0
 
         # Wrap to ±half period
         while raw_error_ms > beat_period_ms / 2:
@@ -2293,7 +2326,7 @@ class MidiClockMainWindow(QWidget):
         logging.debug(
             "Phase: next_cdj=%.1f ms next_midi=%.1f ms raw_err=%.2f ms "
             "smoothed=%.2f ms correction=%.2f ms",
-            next_beat_ms, (t_next_midi - t_recv) * 1000.0,
+            next_beat_ms, (t_next_midi_wall - t_recv) * 1000.0,
             raw_error_ms, smoothed_error_ms, correction_ms
         )
 
