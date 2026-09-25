@@ -2302,39 +2302,10 @@ class MidiClockMainWindow(QWidget):
                 logging.info("Beat grid snap: %.1f ms", snap_ms)
             return
 
-        if not self.auto_phase_correction_enabled:
-            return
-
-        # Slip Mode: keine Korrektur
-        if self._slip_mode_active:
-            return
-
-        # Phasenfehler messen (CDJ Beat-Ankunftszeit = echter Beat)
-        t_cdj_beat = time.time()
-        t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
-        if t_last_midi is None:
-            return
-
-        error_ms = (t_cdj_beat - t_last_midi) * 1000.0 % beat_period_ms
-        if error_ms > beat_period_ms / 2:
-            error_ms -= beat_period_ms
-        self.phase_error_ms = error_ms - self._grid_offset_ms
-
-        # Sanfte SKEW-Korrektur: max +-2ms pro Beat
-        # Kein SETPOS_TIME hier -- nur gradueller Nudge
-        MAX_SKEW_MS = 2.0
-        correction_ms = max(-MAX_SKEW_MS, min(MAX_SKEW_MS, -self.phase_error_ms))
-        if abs(self.phase_error_ms) > 0.5:  # Toleranzband 0.5ms
-            if hasattr(self.midi_clock_instance, 'adjust_phase'):
-                # Nur SKEW verwenden (adjust_phase <= 20ms nutzt SKEW)
-                self.midi_clock_instance.adjust_phase(correction_ms)
-
-        self._sparkline.append(round(self.phase_error_ms, 1))
-        if len(self._sparkline) > _SPARKLINE_LEN:
-            self._sparkline.pop(0)
-
-        logging.debug("Phase: err=%.1f ms corr=%.1f ms", self.phase_error_ms, correction_ms)
-        self._update_phase_error_display()
+        # Nach dem Snap laeuft der Clock stabil auf CDJ-BPM.
+        # last_beat_wall_time hat ~150-200ms ALSA-Callback-Latenz und ist
+        # nicht als Phasenmessung geeignet -- kein weiteres adjust_phase.
+        # BPM-Drift wird durch setBpm ausgeglichen (bereits in _apply_bpm).
     def _get_active_source_player_number(self):
         """Returns the player number of the current BPM/phase source, or None."""
         if self.selected_player_source is not None:
