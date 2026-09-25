@@ -662,7 +662,7 @@ class MidiClockMainWindow(QWidget):
         # Auto phase correction state
         self.auto_phase_correction_enabled = True
         self.phase_error_ms = 0.0          # last measured phase error in ms
-        self.phase_correction_strength = 0.3  # 0.0-1.0, how aggressively we correct per beat
+        self.phase_correction_strength = 0.8  # 0.0-1.0, how aggressively we correct per beat
         self.phase_error_history = []      # rolling history for smoothing
         self.PHASE_HISTORY_LEN = 4
         self._grid_offset_ms = 0.0         # persistent manual offset, survives auto-sync corrections
@@ -1586,10 +1586,10 @@ class MidiClockMainWindow(QWidget):
         autosync_layout.setContentsMargins(6, 4, 6, 6)
         autosync_layout.setSpacing(4)
 
-        self.auto_sync_button = QPushButton("Auto Sync: OFF")
+        self.auto_sync_button = QPushButton("Auto Sync: ON")
         self.auto_sync_button.setCheckable(True)
-        self.auto_sync_button.setChecked(False)
-        self.auto_phase_correction_enabled = False
+        self.auto_sync_button.setChecked(True)
+        self.auto_phase_correction_enabled = True
         self.auto_sync_button.setMinimumHeight(32)
         self.auto_sync_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.auto_sync_button.setStyleSheet(
@@ -2164,7 +2164,10 @@ class MidiClockMainWindow(QWidget):
         beat_in_bar = ((bn - 1) % 4) + 1  # normalise to 1..4
         # beats remaining to finish the current bar (min 1 so we never fire
         # on the same beat that was just received)
-        remaining = 4 - (beat_in_bar - 1)   # 4 on beat1, 3 on beat2, 2 on beat3, 1 on beat4
+        # Always wait until the next bar beat 1 — minimum 1 beat, maximum 4
+        remaining = (4 - beat_in_bar) + 1   # beats until next beat 1
+        if remaining > 4:
+            remaining = 4
         return remaining
 
     def handle_prodj_beat(self, player_number: int, beat_number: int) -> None:
