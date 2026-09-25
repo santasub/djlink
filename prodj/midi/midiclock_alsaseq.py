@@ -22,7 +22,11 @@ class MidiClock(Thread):
     self.add_ns = math.floor(1e9 * self._delay)
     self.enqueue_at_once = 24
     self.beat_callback = None
-    self.last_beat_wall_time = None      # wall-clock time of last beat callback (time.time())
+    self.last_beat_wall_time = None      # wall-clock when beat tick was enqueued
+    self._last_beat_queue_s = 0         # queue-time seconds of that beat tick
+    self._last_beat_queue_ns = 0        # queue-time nanoseconds of that beat tick
+    self._queue_start_wall = None       # wall-clock when alsaseq.start() was called
+    self._queue_start_ns = 0            # queue-time at start (always 0)
 
     # this call causes /proc/asound/seq/clients to be created
     alsaseq.client('MidiClock', 0, 1, True)
@@ -100,53 +104,54 @@ class MidiClock(Thread):
   def set_beat_callback(self, callback):
       self.beat_callback = callback
 
-  def _queue_time_ns(self) -> int:
-    """Return the current ALSA sequencer queue time in nanoseconds.
-    This is the time of the *last event the hardware has processed*,
-    i.e. the real hardware output clock — not a software estimate.
-    Returns 0 if the queue has not started yet."""
-    try:
-      status, time_t, events = alsaseq.status()
-      # time_t is a (seconds, nanoseconds) tuple from the queue
-      return time_t[0] * 1_000_000_000 + time_t[1]
-    except Exception:
-      return 0
-
-  def next_beat_wall_time(self) -> float:
-    """Return the wall-clock time of the next MIDI beat output.
-
-    Uses the ALSA queue clock (hardware-anchored) to compute when
-    time_s/time_ns (= next enqueue position) will actually be played.
-    This gives a precise prediction regardless of Python scheduling jitter.
-    """
-    with self._bpm_lock:
-      next_ns = self.time_s * 1_000_000_000 + self.time_ns
-    queue_ns = self._queue_time_ns()
-    if queue_ns == 0:
-      return time.time()
-    # remaining ns until next scheduled beat in queue-time
-    remaining_ns = next_ns - queue_ns
-    return time.time() + remaining_ns / 1e9
-
   def enqueue_events(self):
     fire_beat = False
+    beat_enqueue_wall_time = None
     for i in range(self.enqueue_at_once):
       send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
       alsaseq.output(send)
       if i % 24 == 0:
         fire_beat = True
+        # Record wall time + queue time at the moment this beat tick is enqueued
+        # The beat tick is scheduled at (self.time_s, self.time_ns) in queue-time
+        beat_enqueue_wall_time = time.time()
+        self._last_beat_queue_s = self.time_s
+        self._last_beat_queue_ns = self.time_ns
       self.advance_time()
     if fire_beat:
-      self.last_beat_wall_time = time.time()
+      self.last_beat_wall_time = beat_enqueue_wall_time
       if self.beat_callback:
         self.beat_callback()
 
   def send_note(self, note):
     alsaseq.output((6, 0, 0, 0, (0,0), (128,0), (self.client_id, self.client_port), (0,note,127,0,0)))
 
+  def _queue_wall_time_for(self, queue_s: int, queue_ns: int) -> float:
+    """Convert an ALSA queue timestamp to wall-clock time.
+
+    We calibrate once at start: wall_start = wall clock when queue starts,
+    queue_start = 0. Then any queue time t maps to:
+        wall = wall_start + (t - queue_start) = wall_start + t
+    """
+    if self._queue_start_wall is None:
+      return time.time()
+    queue_s_total = queue_s + queue_ns / 1e9
+    return self._queue_start_wall + queue_s_total
+
+  def next_beat_wall_time(self) -> float:
+    """Return wall-clock time when the last-enqueued beat tick will actually
+    play out of the MIDI port.
+
+    Uses the calibrated queue-time → wall-clock mapping so the result is
+    independent of Python scheduling jitter and ALSA queue depth.
+    """
+    return self._queue_wall_time_for(self._last_beat_queue_s,
+                                     self._last_beat_queue_ns)
+
   def run(self):
     logging.info("Starting MIDI clock queue")
     self.enqueue_events()
+    self._queue_start_wall = time.time()   # calibration point
     alsaseq.start()
     while self.keep_running:
       # not using alsaseq.syncoutput() here, as we would not be fast enough to enqueue more events after
