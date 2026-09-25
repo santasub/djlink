@@ -2227,114 +2227,66 @@ class MidiClockMainWindow(QWidget):
                     self._countdown_label.setText(str(remaining))
 
     def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
-        """Called on every beat packet from the CDJ with exact next_beat distance in ms.
-        This is the heart of automatic phase correction."""
+        # CDJ Beat-Paket Empfangszeitpunkt = echter Beat-Zeitpunkt.
+        # next_beat_ms vom XDJ-700 ist immer 500ms (Dummy) - ignorieren.
+        # Fehler = zeitlicher Abstand letzter MIDI Beat zu CDJ Beat, mod beat_period.
         if self.manual_bpm_mode_active:
             return
-        if next_beat_ms is None:
-            return  # status-packet beat, no distance info
         if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
             return
-
         active_source = self._get_active_source_player_number()
         if player_number != active_source:
-            logging.debug("beat_timing: player %d ignored, active_source=%s",
-                          player_number, active_source)
             return
 
-        # ── Wall-clock phase error ──────────────────────────────────────────
-        # We need the REAL time difference between our next MIDI beat and
-        # the next CDJ beat — both anchored to wall clock (time.time()).
-        #
-        # t_recv: wall time when this packet arrived (now)
-        # t_next_cdj:  t_recv + next_beat_ms/1000
-        #
-        # t_last_midi_beat: last time our MIDI clock fired a beat callback
-        # t_next_midi_beat: t_last_midi_beat + beat_period_s
-        #
-        # error = t_next_midi_beat - t_next_cdj
-        #   > 0: our next beat is LATER than CDJ  → we are BEHIND → nudge earlier (-)
-        #   < 0: our next beat is EARLIER than CDJ → we are AHEAD  → nudge later  (+)
         beat_period_ms = self.midi_clock_instance.delay * 24.0 * 1000.0
         if beat_period_ms <= 0:
             return
 
-        t_recv = time.time()
-        t_next_cdj = t_recv + next_beat_ms / 1000.0
-
-        # Check if we have any timing reference yet
+        t_cdj_beat = time.time()
         t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
-        has_next_beat = hasattr(self.midi_clock_instance, 'next_beat_wall_time')
-        if t_last_midi is None and not has_next_beat:
+
+        if t_last_midi is None:
             self._beat_snap_pending = True
 
         if self._beat_snap_pending:
             self._beat_snap_pending = False
-            snap_ms = self._compute_snap_ms(
-                self.midi_clock_instance,
-                t_next_cdj=t_next_cdj,
-                beat_period_ms=beat_period_ms,
-                offset_ms=self._grid_offset_ms
-            )
-            if snap_ms is not None:
+            if t_last_midi is not None:
+                error_ms = (t_cdj_beat - t_last_midi) * 1000.0 % beat_period_ms
+                if error_ms > beat_period_ms / 2:
+                    error_ms -= beat_period_ms
+                snap_ms = -error_ms + self._grid_offset_ms
                 self.midi_clock_instance.adjust_phase(snap_ms)
-                logging.info("Beat grid snap: %.1f ms (offset %.1f ms)",
-                             snap_ms, self._grid_offset_ms)
+                logging.info("Beat grid snap: %.1f ms", snap_ms)
             return
 
         if not self.auto_phase_correction_enabled:
             return
-
-        if t_last_midi is None and not has_next_beat:
+        if t_last_midi is None:
             return
 
-        # Use next_beat_wall_time() for ALSA (queue-anchored), else estimate.
-        t_next_midi_wall = self._next_beat_wall_time(self.midi_clock_instance,
-                                                      beat_period_ms)
+        error_ms = (t_cdj_beat - t_last_midi) * 1000.0 % beat_period_ms
+        if error_ms > beat_period_ms / 2:
+            error_ms -= beat_period_ms
 
-        # Positive error: our beat comes AFTER CDJ beat → we are behind → correct earlier
-        # Negative error: our beat comes BEFORE CDJ beat → we are ahead  → correct later
-        raw_error_ms = (t_next_midi_wall - t_next_cdj) * 1000.0
+        raw_error_ms = error_ms - self._grid_offset_ms
 
-        # Wrap to ±half period
-        while raw_error_ms > beat_period_ms / 2:
-            raw_error_ms -= beat_period_ms
-        while raw_error_ms < -beat_period_ms / 2:
-            raw_error_ms += beat_period_ms
-
-        # Subtract manual offset: if user wants +10ms offset, we tolerate
-        # our beat being 10ms later than CDJ — so target error is 0 at +10ms
-        target_error_ms = raw_error_ms - self._grid_offset_ms
-
-        # Smooth over last N beats
-        self.phase_error_history.append(target_error_ms)
+        self.phase_error_history.append(raw_error_ms)
         if len(self.phase_error_history) > self.PHASE_HISTORY_LEN:
             self.phase_error_history.pop(0)
-        smoothed_error_ms = sum(self.phase_error_history) / len(self.phase_error_history)
+        smoothed_ms = sum(self.phase_error_history) / len(self.phase_error_history)
 
-        # Correction: negative error_ms means nudge earlier, positive means later.
-        # We apply a fraction per beat for smooth convergence.
-        # Note: adjust_phase(+ms) = later, adjust_phase(-ms) = earlier
-        # Our error is (our_beat - cdj_beat), so correction = -error * strength
-        correction_ms = -smoothed_error_ms * self.phase_correction_strength
-
-        self.phase_error_ms = raw_error_ms
+        correction_ms = -smoothed_ms * self.phase_correction_strength
         self.midi_clock_instance.adjust_phase(correction_ms)
 
-        # Update sparkline
+        self.phase_error_ms = raw_error_ms
         self._sparkline.append(round(raw_error_ms, 1))
         if len(self._sparkline) > _SPARKLINE_LEN:
             self._sparkline.pop(0)
 
-        logging.debug(
-            "Phase: next_cdj=%.1f ms next_midi=%.1f ms raw_err=%.2f ms "
-            "smoothed=%.2f ms correction=%.2f ms",
-            next_beat_ms, (t_next_midi_wall - t_recv) * 1000.0,
-            raw_error_ms, smoothed_error_ms, correction_ms
-        )
+        logging.info("Phase: err=%.1f ms smooth=%.1f ms corr=%.1f ms",
+                     raw_error_ms, smoothed_ms, correction_ms)
 
         self._update_phase_error_display()
-
     def _get_active_source_player_number(self):
         """Returns the player number of the current BPM/phase source, or None."""
         if self.selected_player_source is not None:
