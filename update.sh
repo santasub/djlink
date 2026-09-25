@@ -29,11 +29,14 @@ echo "===================================================="
 echo
 echo "[1/4] Pulling latest code (branch: $GIT_BRANCH)..."
 # Unshallow if needed (shallow clones block pull on some Pi installs)
-git fetch --unshallow 2>/dev/null || git fetch origin
+git fetch --unshallow 2>/dev/null || true
+# Fetch ALL branches so the target branch is available even if never checked out
+git fetch --all --prune
 if git reset --hard origin/"$GIT_BRANCH"; then
-    echo "      OK — code is up to date."
+    echo "      OK — now at $(git rev-parse --short HEAD) on $GIT_BRANCH."
 else
-    echo "      WARNING: git reset failed. Continuing with current code."
+    echo "      ERROR: branch 'origin/$GIT_BRANCH' not found after fetch. Aborting."
+    exit 1
 fi
 
 # ── 2. System dependencies (Linux only) ──────────────────────────
