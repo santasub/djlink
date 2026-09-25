@@ -22,11 +22,7 @@ class MidiClock(Thread):
     self.add_ns = math.floor(1e9 * self._delay)
     self.enqueue_at_once = 24
     self.beat_callback = None
-    self.last_beat_wall_time = None      # wall-clock when beat tick was enqueued
-    self._last_beat_queue_s = 0         # queue-time seconds of that beat tick
-    self._last_beat_queue_ns = 0        # queue-time nanoseconds of that beat tick
-    self._queue_start_wall = None       # wall-clock when alsaseq.start() was called
-    self._queue_start_ns = 0            # queue-time at start (always 0)
+    self.last_beat_wall_time = None      # wall-clock when last beat callback fired
 
     # this call causes /proc/asound/seq/clients to be created
     alsaseq.client('MidiClock', 0, 1, True)
@@ -109,10 +105,6 @@ class MidiClock(Thread):
     for i in range(self.enqueue_at_once):
       if i % 24 == 0:
         fire_beat = True
-        # Capture the queue-time of this beat tick BEFORE advancing
-        # This is when this beat actually plays out of the MIDI port
-        self._last_beat_queue_s = self.time_s
-        self._last_beat_queue_ns = self.time_ns
       send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
       alsaseq.output(send)
       self.advance_time()
@@ -124,47 +116,30 @@ class MidiClock(Thread):
   def send_note(self, note):
     alsaseq.output((6, 0, 0, 0, (0,0), (128,0), (self.client_id, self.client_port), (0,note,127,0,0)))
 
-  def _queue_wall_time_for(self, queue_s: int, queue_ns: int) -> float:
-    """Convert an ALSA queue timestamp to wall-clock time.
-
-    We calibrate once at start: wall_start = wall clock when queue starts,
-    queue_start = 0. Then any queue time t maps to:
-        wall = wall_start + (t - queue_start) = wall_start + t
-    """
-    if self._queue_start_wall is None:
-      return time.time()
-    queue_s_total = queue_s + queue_ns / 1e9
-    return self._queue_start_wall + queue_s_total
-
   def next_beat_wall_time(self) -> float:
     """Return wall-clock time of the NEXT upcoming MIDI beat output.
 
-    _last_beat_queue_s/ns is the queue-time of the most recently enqueued
-    beat tick.  Since the callback fires ~0.5 beat-periods AFTER that tick
-    has already played, the truly next beat is at:
-
-        queue_start_wall + _last_beat_queue_s + beat_period
-
-    We find the smallest N such that
-        queue_start_wall + _last_beat_queue_s + N*beat_period > now
+    last_beat_wall_time is stamped when enqueue_events() fires the callback.
+    At that moment the beat tick has already played (the queue was draining).
+    The next beat is at last_beat_wall_time + N * beat_period where N is the
+    smallest integer >= 1 such that the result is strictly in the future.
     """
-    if self._queue_start_wall is None:
+    t_last = self.last_beat_wall_time
+    if t_last is None:
       return time.time()
     with self._bpm_lock:
       beat_period_s = self._delay * 24.0
-    last_beat_wall = self._queue_wall_time_for(self._last_beat_queue_s,
-                                               self._last_beat_queue_ns)
-    now = time.time()
     if beat_period_s <= 0:
-      return now
-    # Find next beat boundary strictly after now
-    n = max(1, int((now - last_beat_wall) / beat_period_s) + 1)
-    return last_beat_wall + n * beat_period_s
+      return time.time()
+    now = time.time()
+    elapsed = now - t_last
+    # How many full periods have passed since last callback?
+    n = max(1, int(elapsed / beat_period_s) + 1)
+    return t_last + n * beat_period_s
 
   def run(self):
     logging.info("Starting MIDI clock queue")
     self.enqueue_events()
-    self._queue_start_wall = time.time()   # calibration point
     alsaseq.start()
     while self.keep_running:
       # not using alsaseq.syncoutput() here, as we would not be fast enough to enqueue more events after
