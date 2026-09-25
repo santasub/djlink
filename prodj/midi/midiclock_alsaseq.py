@@ -106,20 +106,18 @@ class MidiClock(Thread):
 
   def enqueue_events(self):
     fire_beat = False
-    beat_enqueue_wall_time = None
     for i in range(self.enqueue_at_once):
-      send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
-      alsaseq.output(send)
       if i % 24 == 0:
         fire_beat = True
-        # Record wall time + queue time at the moment this beat tick is enqueued
-        # The beat tick is scheduled at (self.time_s, self.time_ns) in queue-time
-        beat_enqueue_wall_time = time.time()
+        # Capture the queue-time of this beat tick BEFORE advancing
+        # This is when this beat actually plays out of the MIDI port
         self._last_beat_queue_s = self.time_s
         self._last_beat_queue_ns = self.time_ns
+      send = (36, 1, 0, 0, (self.time_s, self.time_ns), (128,0), (self.client_id, self.client_port), None)
+      alsaseq.output(send)
       self.advance_time()
     if fire_beat:
-      self.last_beat_wall_time = beat_enqueue_wall_time
+      self.last_beat_wall_time = time.time()
       if self.beat_callback:
         self.beat_callback()
 
@@ -139,14 +137,29 @@ class MidiClock(Thread):
     return self._queue_start_wall + queue_s_total
 
   def next_beat_wall_time(self) -> float:
-    """Return wall-clock time when the last-enqueued beat tick will actually
-    play out of the MIDI port.
+    """Return wall-clock time of the NEXT upcoming MIDI beat output.
 
-    Uses the calibrated queue-time → wall-clock mapping so the result is
-    independent of Python scheduling jitter and ALSA queue depth.
+    _last_beat_queue_s/ns is the queue-time of the most recently enqueued
+    beat tick.  Since the callback fires ~0.5 beat-periods AFTER that tick
+    has already played, the truly next beat is at:
+
+        queue_start_wall + _last_beat_queue_s + beat_period
+
+    We find the smallest N such that
+        queue_start_wall + _last_beat_queue_s + N*beat_period > now
     """
-    return self._queue_wall_time_for(self._last_beat_queue_s,
-                                     self._last_beat_queue_ns)
+    if self._queue_start_wall is None:
+      return time.time()
+    with self._bpm_lock:
+      beat_period_s = self._delay * 24.0
+    last_beat_wall = self._queue_wall_time_for(self._last_beat_queue_s,
+                                               self._last_beat_queue_ns)
+    now = time.time()
+    if beat_period_s <= 0:
+      return now
+    # Find next beat boundary strictly after now
+    n = max(1, int((now - last_beat_wall) / beat_period_s) + 1)
+    return last_beat_wall + n * beat_period_s
 
   def run(self):
     logging.info("Starting MIDI clock queue")
