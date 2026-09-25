@@ -1084,6 +1084,10 @@ class MidiClockMainWindow(QWidget):
         """Single consolidated call-site for setBpm.  Always includes
         the current precision_pitch_offset.  Safe to call when clock is
         stopped (no-op).
+
+        During count-in (_sync_start_pending) BPM updates are suppressed:
+        the clock is already ticking at the seed BPM and we must not
+        re-anchor its deadline accumulator while counting down beats.
         """
         alive = bool(self.midi_clock_instance and self.midi_clock_instance.is_alive())
         if not alive:
@@ -1092,12 +1096,26 @@ class MidiClockMainWindow(QWidget):
         if bpm <= 0:
             logging.error("_apply_bpm: invalid BPM %.2f — ignored.", bpm)
             return
+        # Freeze BPM updates during count-in — changing the tick period now
+        # would shift the deadline accumulator and make the snap land wrong.
+        if self._sync_start_pending:
+            logging.debug("_apply_bpm: suppressed during count-in (%.2f BPM)", bpm)
+            return
         bpm = max(self.BPM_MIN, min(self.BPM_MAX, bpm))
         # Skip if BPM hasn't changed meaningfully — avoids resetting the
         # clock thread's deadline accumulator on every CDJ status packet.
         if (self._last_applied_bpm is not None
                 and abs(bpm - self._last_applied_bpm) < self._BPM_CHANGE_THRESHOLD):
             return
+        # Large BPM change (>2 BPM) → force a grid re-snap on next beat packet
+        # so the phase-correction loop re-anchors to the new tempo.
+        if (self._last_applied_bpm is not None
+                and abs(bpm - self._last_applied_bpm) > 2.0):
+            self._beat_snap_pending = True
+            self.phase_error_history.clear()
+            self._sparkline.clear()
+            logging.info("_apply_bpm: large tempo change %.2f→%.2f, forcing re-snap",
+                         self._last_applied_bpm, bpm)
         self._last_applied_bpm = bpm
         logging.info("setBpm BPM=%.2f", bpm)
         self.midi_clock_instance.setBpm(bpm)
@@ -2128,14 +2146,21 @@ class MidiClockMainWindow(QWidget):
                         if beat_period_ms > 0:
                             t_last = getattr(clk, 'last_beat_wall_time', None)
                             if t_last is not None:
-                                # elapsed since last MIDI beat
-                                elapsed_ms = (time.time() - t_last) * 1000.0
-                                # how far into the current beat period are we
+                                # Compensate for ALSA queue pre-buffer latency:
+                                # last_beat_wall_time is stamped at enqueue time,
+                                # not at hardware output. Subtract the lookahead.
+                                alsa_lat_ms = getattr(clk, 'queue_latency_ms', 0.0)
+                                t_last_real = t_last - alsa_lat_ms / 1000.0
+                                # How far into the current beat period are we?
+                                elapsed_ms = (time.time() - t_last_real) * 1000.0
                                 phase_ms = elapsed_ms % beat_period_ms
-                                # snap: nudge earlier by phase_ms so next beat = now
+                                # Nudge earlier so the *next* MIDI beat lands NOW
                                 snap_ms = -(phase_ms)
                                 clk.adjust_phase(snap_ms)
-                                logging.info("Sync snap: %.1f ms before send_start", snap_ms)
+                                logging.info(
+                                    "Sync snap: %.1f ms (ALSA lat %.1f ms) before send_start",
+                                    snap_ms, alsa_lat_ms
+                                )
 
                     self._countdown_label.setText("►")
                     self._sync_status_label.setText("Running — in sync!")
