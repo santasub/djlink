@@ -2227,9 +2227,10 @@ class MidiClockMainWindow(QWidget):
                     self._countdown_label.setText(str(remaining))
 
     def handle_prodj_beat_timing(self, player_number, beat_number, next_beat_ms):
-        # CDJ Beat-Paket Empfangszeitpunkt = echter Beat-Zeitpunkt.
-        # next_beat_ms vom XDJ-700 ist immer 500ms (Dummy) - ignorieren.
-        # Fehler = zeitlicher Abstand letzter MIDI Beat zu CDJ Beat, mod beat_period.
+        # Auto Sync = nur BPM vom CDJ folgen.
+        # KEINE Phase-Korrekturen waehrend des Betriebs.
+        # Synthesizer/Drummaschinen brauchen stabilen Clock ohne Spruenge.
+        # Phase wird einmalig beim Start gesetzt, danach laeuft Clock konstant.
         if self.manual_bpm_mode_active:
             return
         if not self.midi_clock_instance or not self.midi_clock_instance.is_alive():
@@ -2242,14 +2243,11 @@ class MidiClockMainWindow(QWidget):
         if beat_period_ms <= 0:
             return
 
-        t_cdj_beat = time.time()
-        t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
-
-        if t_last_midi is None:
-            self._beat_snap_pending = True
-
+        # Einmaliger Grid-Snap nach Start oder Tempo-Wechsel
         if self._beat_snap_pending:
             self._beat_snap_pending = False
+            t_cdj_beat = time.time()
+            t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
             if t_last_midi is not None:
                 error_ms = (t_cdj_beat - t_last_midi) * 1000.0 % beat_period_ms
                 if error_ms > beat_period_ms / 2:
@@ -2259,33 +2257,18 @@ class MidiClockMainWindow(QWidget):
                 logging.info("Beat grid snap: %.1f ms", snap_ms)
             return
 
-        if not self.auto_phase_correction_enabled:
-            return
+        # Phasenfehler nur messen und anzeigen -- KEIN adjust_phase
+        t_cdj_beat = time.time()
+        t_last_midi = getattr(self.midi_clock_instance, 'last_beat_wall_time', None)
         if t_last_midi is None:
             return
-
         error_ms = (t_cdj_beat - t_last_midi) * 1000.0 % beat_period_ms
         if error_ms > beat_period_ms / 2:
             error_ms -= beat_period_ms
-
-        raw_error_ms = error_ms - self._grid_offset_ms
-
-        self.phase_error_history.append(raw_error_ms)
-        if len(self.phase_error_history) > self.PHASE_HISTORY_LEN:
-            self.phase_error_history.pop(0)
-        smoothed_ms = sum(self.phase_error_history) / len(self.phase_error_history)
-
-        correction_ms = -smoothed_ms * self.phase_correction_strength
-        self.midi_clock_instance.adjust_phase(correction_ms)
-
-        self.phase_error_ms = raw_error_ms
-        self._sparkline.append(round(raw_error_ms, 1))
+        self.phase_error_ms = error_ms - self._grid_offset_ms
+        self._sparkline.append(round(self.phase_error_ms, 1))
         if len(self._sparkline) > _SPARKLINE_LEN:
             self._sparkline.pop(0)
-
-        logging.info("Phase: err=%.1f ms smooth=%.1f ms corr=%.1f ms",
-                     raw_error_ms, smoothed_ms, correction_ms)
-
         self._update_phase_error_display()
     def _get_active_source_player_number(self):
         """Returns the player number of the current BPM/phase source, or None."""
